@@ -325,22 +325,31 @@ function saveSim(){writeStore(SIMKEY,SIM);indicator();}
 function loanMonthly(l){return l.status==='active'?l.installment:0;}
 function loanDues(l){return round2(l.installment*l.dueCount);}
 function cardMonthly(c){return c.status==='closed'?0:round2(c.limit*c.pct/100);}
+/* الحد الأدنى المستحق للدفع (يختلف تماما عن نسبة احتساب الالتزام الشهري):
+   الشهر الحالي: القيمة اليدوية إن وُجدت (>0) وإلا 5% من الرصيد. الأشهر التالية: 5% من الرصيد المتبقي دائما. */
+var MIN_PCT=5;
+function effectiveMinDue(c,isFirst){
+  if(c.status==='closed') return 0;
+  var bal=c.balance;
+  if(isFirst&&c.minDue>0) return bal>0?round2(Math.min(c.minDue,bal)):round2(c.minDue);
+  return round2(bal*MIN_PCT/100);
+}
 
 function totals(){
   var t={loanMonthly:0,cardMonthly:0,total:0,dues:0,loanDues:0,cardBal:0,early:0,
-    loansActive:0,loansClosed:0,cardsActive:0,cardsClosed:0,limits:0,balAll:0};
+    loansActive:0,loansClosed:0,cardsActive:0,cardsClosed:0,limits:0,balAll:0,cardMin:0};
   S.loans.forEach(function(l){
     if(l.status==='active'){t.loansActive++;t.loanMonthly+=l.installment;t.loanDues+=loanDues(l);t.early+=l.early;}
     else t.loansClosed++;
   });
   S.cards.forEach(function(c){
-    if(c.status==='closed') t.cardsClosed++; else {t.cardsActive++;t.cardMonthly+=cardMonthly(c);t.cardBal+=c.balance;}
+    if(c.status==='closed') t.cardsClosed++; else {t.cardsActive++;t.cardMonthly+=cardMonthly(c);t.cardBal+=c.balance;t.cardMin+=effectiveMinDue(c,true);}
     t.limits+=c.limit; t.balAll+=c.balance;
   });
   t.loanMonthly=round2(t.loanMonthly);t.cardMonthly=round2(t.cardMonthly);
   t.total=round2(t.loanMonthly+t.cardMonthly);
   t.loanDues=round2(t.loanDues);t.cardBal=round2(t.cardBal);
-  t.dues=round2(t.loanDues+t.cardBal);t.early=round2(t.early);
+  t.cardMin=round2(t.cardMin);t.dues=round2(t.loanDues+t.cardMin);t.early=round2(t.early);
   return t;
 }
 function evalRatio(total,salary){
@@ -422,7 +431,8 @@ function renderDash(){
     stat('نسبة الالتزام الفعلية من الراتب',ev.ratio==null?'—':fmtPct(ev.ratio))+
     stat('إجمالي أقساط القروض والتمويلات',money(t.loanMonthly),t.loansActive+' منتج نشط')+
     stat('إجمالي التزام البطاقات',money(t.cardMonthly),t.cardsActive+' بطاقة غير مغلقة')+
-    stat('إجمالي المبالغ المستحقة حاليا',money(t.dues),'أقساط: '+fmt(t.loanDues)+' • بطاقات: '+fmt(t.cardBal))+
+    stat('إجمالي المبالغ المستحقة حاليا',money(t.dues),'أقساط: '+fmt(t.loanDues)+' • حد أدنى للبطاقات: '+fmt(t.cardMin))+
+    stat('مجموع أرصدة البطاقات',money(t.balAll),'الرصيد الكامل وليس المطلوب دفعه الآن')+
     stat('إجمالي مبالغ السداد المبكر',money(t.early),'للتمويلات النشطة')+
   '</div>';
   $('#page-dash').innerHTML=h;
@@ -460,23 +470,24 @@ function renderCommit(){
     $('#loanTable').innerHTML=h+'</tbody></table></div>';
   }
   $('#cardSummary').innerHTML=sumBox([
+    ['مجموع أرصدة البطاقات: ',money(t.balAll)],
+    ['مجموع الحدود الدنيا المستحقة حاليا: ',money(t.cardMin)],
     ['مجموع الحدود الائتمانية: ',money(t.limits)],
-    ['مجموع الأرصدة المستحقة: ',money(t.balAll)],
-    ['مجموع الالتزام الشهري المحتسب: ',money(t.cardMonthly)],
+    ['مجموع الالتزام الشهري المحتسب للبطاقات: ',money(t.cardMonthly)],
     ['النشطة: ',t.cardsActive],['المغلقة: ',t.cardsClosed]]);
   if(!S.cards.length){
     $('#cardTable').innerHTML='<div class="empty">لا توجد بطاقات. اضغط «إضافة بطاقة».</div>';
   }else{
-    var c='<div class="tablewrap"><table class="resp"><thead><tr><th>الحالة</th><th>البطاقة / البنك</th><th>الحد الائتماني</th><th>الرصيد المستحق</th><th>الحد الأدنى المستحق</th><th>نسبة الاحتساب</th><th>الالتزام الشهري</th><th>إجراءات</th></tr></thead><tbody>';
+    var c='<div class="tablewrap"><table class="resp"><thead><tr><th>الحالة</th><th>البطاقة / البنك</th><th>الحد الائتماني</th><th>الرصيد (الإجمالي)</th><th>الحد الأدنى المستحق</th><th>نسبة الاحتساب</th><th>الالتزام الشهري المحتسب</th><th>إجراءات</th></tr></thead><tbody>';
     S.cards.forEach(function(k){
       c+='<tr class="'+(k.status==='closed'?'closed':'')+'">'+
         '<td data-label="الحالة"><select data-f="card-status" data-id="'+esc(k.id)+'">'+opts(CARD_STATUS,k.status)+'</select></td>'+
         '<td data-label="البطاقة / البنك">'+(esc(k.name)||'<span style="color:var(--muted)">بدون اسم</span>')+'</td>'+
         '<td class="num" data-label="الحد الائتماني">'+money(k.limit)+'</td>'+
-        '<td class="num" data-label="الرصيد المستحق">'+money(k.balance)+'</td>'+
-        '<td class="num" data-label="الحد الأدنى المستحق">'+money(k.minDue)+'</td>'+
+        '<td class="num" data-label="الرصيد (الإجمالي)">'+money(k.balance)+'</td>'+
+        '<td class="num" data-label="الحد الأدنى المستحق">'+money(effectiveMinDue(k,true))+((k.minDue>0||!(k.balance>0)||k.status==='closed')?'':' <span class="cur">(تلقائي 5%)</span>')+'</td>'+
         '<td class="num" data-label="نسبة الاحتساب">'+fmtPct(k.pct)+'</td>'+
-        '<td class="num" data-label="الالتزام الشهري"><b>'+money(cardMonthly(k))+'</b></td>'+
+        '<td class="num" data-label="الالتزام الشهري المحتسب"><b>'+money(cardMonthly(k))+'</b></td>'+
         '<td class="act"><button class="btn sm" data-act="edit-card" data-id="'+esc(k.id)+'">تعديل</button><button class="btn sm danger" data-act="del-card" data-id="'+esc(k.id)+'">حذف</button></td></tr>';
     });
     $('#cardTable').innerHTML=c+'</tbody></table></div>';
@@ -518,16 +529,22 @@ function cardForm(c){
    '<label>اسم البطاقة أو البنك<input type="text" id="f-name" value="'+esc(c.name)+'" autocomplete="off"></label>'+
    '<label>الحد الائتماني (ر.س)<input type="text" id="f-limit" inputmode="decimal" value="'+(c.limit||'')+'" placeholder="0.00" autocomplete="off"></label>'+
    '<label>الرصيد أو المبلغ المستحق حاليا (اختياري)<input type="text" id="f-bal" inputmode="decimal" value="'+(c.balance||'')+'" placeholder="0.00" autocomplete="off"></label>'+
-   '<label>الحد الأدنى المستحق (ر.س)<input type="text" id="f-min" inputmode="decimal" value="'+(c.minDue||'')+'" placeholder="0.00" autocomplete="off"></label>'+
+   '<label>الحد الأدنى المستحق للشهر الحالي (ر.س) <span style="font-weight:400;color:var(--muted)">— اتركه فارغا ليُحتسب تلقائيا 5% من الرصيد</span><input type="text" id="f-min" inputmode="decimal" value="'+(c.minDue||'')+'" placeholder="0.00" autocomplete="off"></label>'+
    '<label>نسبة احتساب الالتزام الشهري (%)<input type="text" id="f-pct" inputmode="decimal" value="'+c.pct+'" autocomplete="off"></label>'+
-   '<div class="note">الالتزام الشهري المحتسب (تلقائي): <b id="f-calc">0.00</b> ر.س</div></div>';
+   '<div class="note">الالتزام الشهري المحتسب (تلقائي): <b id="f-calc">0.00</b> ر.س</div>'+
+   '<div class="note">الحد الأدنى المعتمد للشهر الحالي: <b id="f-effmin">0.00</b> ر.س</div></div>';
 }
 function openCard(id){
   var cur=id?S.cards.filter(function(x){return x.id===id;})[0]:null;
   openModal({title:cur?'تعديل بطاقة':'إضافة بطاقة',body:cardForm(cur),
     afterOpen:function(ov){
-      function upd(){var l=parseNum($('#f-limit',ov).value).v||0,p=parseNum($('#f-pct',ov).value,1e6).v||0;$('#f-calc',ov).textContent=fmt(round2(l*p/100));}
-      $('#f-limit',ov).addEventListener('input',upd);$('#f-pct',ov).addEventListener('input',upd);upd();
+      function upd(){
+        var l=parseNum($('#f-limit',ov).value).v||0,p=parseNum($('#f-pct',ov).value,1e6).v||0;
+        var b=parseNum($('#f-bal',ov).value).v||0,m=parseNum($('#f-min',ov).value).v||0;
+        $('#f-calc',ov).textContent=fmt(round2(l*p/100));
+        $('#f-effmin',ov).textContent=fmt(effectiveMinDue({status:'active',balance:b,minDue:m},true));
+      }
+      ['#f-limit','#f-pct','#f-bal','#f-min'].forEach(function(q){$(q,ov).addEventListener('input',upd);});upd();
     },
     onOk:function(ov){
       var name=$('#f-name',ov).value.trim();
@@ -621,35 +638,37 @@ function loanActOf(l,m){
   if(a==='dues') cost=loanDues(l); else if(a==='early') cost=l.early; else if(a==='manual') cost=amt;
   return {a:a,amt:amt,cost:round2(cost),closes:a==='early',locked:false};
 }
-function cardActOf(c,m){
+function cardActOf(c,m,first){
   if(c.status==='closed') return {a:'none',amt:0,cost:0,closes:false,locked:true};
   var v=m.cards[c.id]||{a:'none',amt:0}, a=v.a||'none', amt=clampNum(v.amt), cost=0;
-  if(a==='min') cost=c.minDue; else if(a==='partial') cost=amt; else if(a==='full') cost=c.balance;
+  if(a==='min') cost=effectiveMinDue(c,first); else if(a==='partial') cost=amt; else if(a==='full') cost=c.balance;
   return {a:a,amt:amt,cost:round2(cost),closes:a==='full',locked:false};
 }
-function costOf(kind,p,v){
+function costOf(kind,p,v,first){
   var pm={loans:{},cards:{}};
   if(kind==='loan'){pm.loans[p.id]=v;return loanActOf(p,pm).cost;}
-  pm.cards[p.id]=v;return cardActOf(p,pm).cost;
+  pm.cards[p.id]=v;return cardActOf(p,pm,first).cost;
 }
 /* تطبيق إجراءات شهر على حالة (مصفوفتا loans و cards) */
-function applyMonthTo(st,m){
+function applyMonthTo(st,m,first){
   st.loans.forEach(function(l){
     var a=loanActOf(l,m);
     if(a.a==='dues') l.dueCount=0;
     else if(a.a==='early'){l.status='closed';l.dueCount=0;}
   });
   st.cards.forEach(function(c){
-    var a=cardActOf(c,m);
+    var a=cardActOf(c,m,first);
     if(a.a==='min') c.balance=round2(Math.max(0,c.balance-a.cost));
     else if(a.a==='partial') c.balance=round2(Math.max(0,c.balance-a.amt));
     else if(a.a==='full'){c.status='closed';c.balance=0;}
+    c.minDue=0; /* الحد الأدنى اليدوي للشهر الحالي فقط، ولا يُرحَّل */
   });
 }
 /* حساب الخطة كاملة: كل شهر يبدأ من نتيجة الشهر السابق، والشهر الأول من بياناتك الفعلية */
 function plan(){
   var st=cloneSt(S), base=oblOf(st), out=[], prevRem=0;
   SIM.months.forEach(function(m,i){
+    if(i>0) st.loans.forEach(function(l){if(l.status==='active') l.dueCount+=1;}); /* يحل قسط الشهر الجديد */
     var carried=(m.carry&&i>0)?Math.max(0,prevRem):0;
     var budget=round2(m.budget+carried), before=oblOf(st), used=0;
     var closedL=[],keepL=[],closedC=[],keepC=[];
@@ -659,12 +678,12 @@ function plan(){
       if(a.closes) closedL.push(nm(l.name)); else keepL.push(nm(l.name));
     });
     st.cards.forEach(function(c){
-      var a=cardActOf(c,m); used+=a.cost;
+      var a=cardActOf(c,m,i===0); used+=a.cost;
       if(c.status==='closed') return;
       if(a.closes) closedC.push(nm(c.name)); else keepC.push(nm(c.name));
     });
     used=round2(used);
-    var after=cloneSt(st); applyMonthTo(after,m);
+    var after=cloneSt(st); applyMonthTo(after,m,i===0);
     var aft=oblOf(after), drop=round2(before-aft);
     var r={i:i,stBefore:st,carried:round2(carried),budget:budget,used:used,remaining:round2(budget-used),
       over:used>budget+0.004,before:before,after:aft,drop:drop,dropPct:before>0?drop/before*100:0,
@@ -723,21 +742,22 @@ function renderSim(){
     });
     h+='</tbody></table></div>';
   }
+  if(k>0) h+='<div class="note">من الشهر الثاني يُضاف قسط مستحق جديد لكل تمويل نشط، لأن قسط الشهر الجديد يحل موعده. فإذا سددت المستحقات في الشهر السابق يظهر هنا قسط واحد، وإذا لم تسددها يتراكم.</div>';
   h+='</div>';
 
   // البطاقات
   h+='<div class="panel"><h3>محاكاة البطاقات</h3>';
   if(!r.stBefore.cards.length) h+='<div class="empty">لا توجد بطاقات مسجلة.</div>';
   else{
-    h+='<div class="tablewrap"><table class="resp"><thead><tr><th>البطاقة / البنك</th><th>الحد الائتماني</th><th>الرصيد المستحق</th><th>الحد الأدنى المستحق</th><th>نسبة الاحتساب</th><th>الالتزام الحالي</th><th>الحالة</th><th>الإجراء</th><th>المبلغ المخصص</th></tr></thead><tbody>';
+    h+='<div class="tablewrap"><table class="resp"><thead><tr><th>البطاقة / البنك</th><th>الحد الائتماني</th><th>الرصيد في بداية الشهر</th><th>الحد الأدنى المستحق لهذا الشهر</th><th>نسبة الاحتساب</th><th>الالتزام الشهري المحتسب</th><th>الحالة</th><th>الإجراء</th><th>المبلغ المخصص</th></tr></thead><tbody>';
     r.stBefore.cards.forEach(function(c){
-      var a=cardActOf(c,SIM.months[k]);
+      var a=cardActOf(c,SIM.months[k],k===0);
       h+='<tr class="'+(a.locked?'closed':'')+'"><td data-label="البطاقة / البنك">'+esc(nm(c.name))+'</td>'+
         '<td class="num" data-label="الحد الائتماني">'+money(c.limit)+'</td>'+
-        '<td class="num" data-label="الرصيد المستحق">'+money(c.balance)+'</td>'+
-        '<td class="num" data-label="الحد الأدنى المستحق">'+money(c.minDue)+'</td>'+
+        '<td class="num" data-label="الرصيد في بداية الشهر">'+money(c.balance)+'</td>'+
+        '<td class="num" data-label="الحد الأدنى المستحق لهذا الشهر">'+money(effectiveMinDue(c,k===0))+'</td>'+
         '<td class="num" data-label="نسبة الاحتساب">'+fmtPct(c.pct)+'</td>'+
-        '<td class="num" data-label="الالتزام الحالي">'+money(cardMonthly(c))+'</td>'+
+        '<td class="num" data-label="الالتزام الشهري المحتسب">'+money(cardMonthly(c))+'</td>'+
         '<td data-label="الحالة">'+CARD_STATUS[c.status]+'</td>'+
         '<td data-label="الإجراء">'+(a.locked?'<span style="color:var(--muted)">مغلقة، لا إجراء</span>':
           '<select data-sim="card" data-id="'+esc(c.id)+'" data-field="a">'+opts(CARD_ACT,a.a)+'</select>')+'</td>'+
@@ -747,7 +767,7 @@ function renderSim(){
     });
     h+='</tbody></table></div>';
   }
-  h+='<div class="note">سداد الحد الأدنى والدفعة الجزئية لا يغيّران الالتزام الشهري للبطاقة، والسداد الكامل مع الإغلاق يجعله صفرا.</div></div>';
+  h+='<div class="note">سداد الحد الأدنى والدفعة الجزئية لا يغيّران الالتزام الشهري للبطاقة (لأنه يعتمد على الحد الائتماني ونسبة الاحتساب)، والسداد الكامل مع الإغلاق يجعله صفرا. الحد الأدنى المستحق في الشهر 1 هو ما أدخلته يدويا (أو 5% من الرصيد إن لم تدخله)، ومن الشهر 2 يُحسب تلقائيا 5% من الرصيد المتبقي.</div></div>';
 
   // النتائج
   h+='<div class="panel"><h3>نتيجة السيناريو (الشهر '+(k+1)+')</h3><div class="kv">'+
@@ -812,10 +832,14 @@ function simChange(kind,id,field,value){
     var p=parseNum(value); if(p.err){toast(p.err,'err');renderSim();return;}
     next.amt=p.v;
   }
-  if(kind==='card'&&field==='a'&&value==='min'&&!(prod.minDue>0)){
-    toast('أدخل الحد الأدنى المستحق للبطاقة أولا من صفحة الالتزامات (زر تعديل)، ثم اختر هذا الإجراء.','err');renderSim();return;
+  var first=(k===0);
+  if(kind==='card'&&field==='a'&&value==='min'&&!(effectiveMinDue(prod,first)>0)){
+    toast('لا يوجد حد أدنى مستحق لهذه البطاقة لأن رصيدها صفر. أدخل رصيدها أو الحد الأدنى من صفحة الالتزامات (زر تعديل).','err');renderSim();return;
   }
-  var newCost=costOf(kind,prod,next), curCost=costOf(kind,prod,cur);
+  if(kind==='card'&&field==='a'&&value==='full'&&!(prod.balance>0)){
+    toast('لا يوجد رصيد مستحق على هذه البطاقة لسداده. لإغلاقها بدون رصيد غيّر حالتها إلى «مغلقة» من صفحة الالتزامات.','err');renderSim();return;
+  }
+  var newCost=costOf(kind,prod,next,first), curCost=costOf(kind,prod,cur,first);
   if(round2(r.used-curCost+newCost)>r.budget+0.004){
     toast('المبلغ المتاح لا يكفي لهذه العملية.','err');renderSim();return;
   }
@@ -895,7 +919,7 @@ function applyScenario(){
     else lines.push('«'+esc(l.name)+'»: دفعة يدوية '+fmt(a.cost)+' ر.س (لا تغيّر بيانات التمويل)');
   });
   S.cards.forEach(function(c){
-    var a=cardActOf(c,m); if(a.a==='none') return; any=true;
+    var a=cardActOf(c,m,true); if(a.a==='none') return; any=true;
     if(a.a==='min') lines.push('«'+esc(c.name)+'»: سداد الحد الأدنى '+fmt(a.cost)+' ر.س وخفض الرصيد المستحق (بدون تغيير الحالة أو الالتزام الشهري)');
     else if(a.a==='partial') lines.push('«'+esc(c.name)+'»: دفعة '+fmt(a.cost)+' ر.س وخفض الرصيد المستحق');
     else lines.push('«'+esc(c.name)+'»: سداد كامل '+fmt(a.cost)+' ر.س وإغلاق البطاقة');
@@ -903,11 +927,12 @@ function applyScenario(){
   if(!any){toast('لا توجد إجراءات في السيناريو لتنفيذها.','err');return;}
   var html='<p>سيتم تعديل بياناتك الأصلية كما يلي:</p><ul class="mlist">'+lines.map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul>'+
     '<p>الالتزام الشهري: <b>'+fmt(r.before)+'</b> ← <b>'+fmt(r.after)+'</b> ر.س</p>'+
-    (SIM.months.length>1?'<p>بعد التنفيذ يصبح الشهر 2 هو الشهر 1، وتبقى بقية الأشهر المخططة محفوظة.</p>':'')+
+    '<p>بعد التنفيذ يبدأ الشهر التالي، فيُضاف قسط مستحق جديد واحد لكل تمويل نشط في خانة «الأقساط المستحقة» (تقدر تعدله من صفحة الالتزامات)، ويُحتسب الحد الأدنى المستحق للبطاقات تلقائيا 5% من الرصيد المتبقي. ويصبح الشهر 2 هو الشهر 1، وتبقى بقية الأشهر المخططة محفوظة.</p>'+
     '<p>هل تريد المتابعة؟</p>';
   confirmDlg('تأكيد تنفيذ السيناريو',html,'نعم، نفّذ',false,function(){
     var carryOver=(SIM.months[1]&&SIM.months[1].carry)?Math.max(0,r.remaining):0;
-    applyMonthTo(S,m);
+    applyMonthTo(S,m,true);
+    S.loans.forEach(function(l){if(l.status==='active') l.dueCount=Math.min(10,l.dueCount+1);});
     if(SIM.months[1]){SIM.months[1].budget=round2(SIM.months[1].budget+carryOver);SIM.months[1].carry=false;}
     SIM.months.shift();
     while(SIM.months.length<MIN_MONTHS) SIM.months.push(newMonth());
@@ -951,7 +976,7 @@ $('#btnReset').addEventListener('click',function(){
 });
 
 /* ===================== تحديث الأداة لآخر نسخة ===================== */
-var APP_VERSION='2026-10-02 · 3';
+var APP_VERSION='2026-10-02 · 5';
 $('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
 $('#btnUpdate').addEventListener('click',function(){
   var b=this, label=b.textContent;
