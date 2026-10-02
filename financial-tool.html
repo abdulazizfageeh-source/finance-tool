@@ -978,8 +978,16 @@ $('#btnReset').addEventListener('click',function(){
 });
 
 /* ===================== تحديث الأداة لآخر نسخة ===================== */
-var APP_VERSION='2026-10-02 · 6';
+var APP_VERSION='2026-10-02 · 7';
 $('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
+/* العمل بدون إنترنت: يحتاج ملف sw.js بجانب هذا الملف في نفس المجلد على الاستضافة */
+if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('sw.js').then(function(){return navigator.serviceWorker.ready;})
+    .then(function(){$('#appVer').textContent+=' • جاهز للعمل بدون إنترنت ✓';})
+    .catch(function(){});
+  });
+}
 $('#btnUpdate').addEventListener('click',function(){
   var b=this, label=b.textContent;
   if(navigator.onLine===false){toast('لا يوجد اتصال بالإنترنت. اتصل بالشبكة ثم أعد المحاولة.','err');return;}
