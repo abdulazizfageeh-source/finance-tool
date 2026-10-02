@@ -201,9 +201,11 @@ footer.tools .sp{flex:1}
     <b>النسخ الاحتياطي:</b>
     <button class="btn" id="btnExport">تصدير JSON</button>
     <button class="btn" id="btnImport">استيراد JSON</button>
+    <button class="btn" id="btnUpdate">تحديث الأداة لآخر نسخة</button>
     <input type="file" id="fileImport" accept=".json,application/json" hidden>
     <span class="sp"></span>
     <button class="btn danger" id="btnReset">إعادة ضبط جميع البيانات</button>
+    <span class="note" id="appVer" style="width:100%;margin:0"></span>
   </div>
 </footer>
 
@@ -946,6 +948,21 @@ $('#btnReset').addEventListener('click',function(){
   confirmDlg('إعادة ضبط جميع البيانات','<p>سيتم حذف الراتب والقروض والبطاقات وبيانات المحاكي نهائيا. يُنصح بتصدير نسخة احتياطية أولا.</p><p>هل أنت متأكد؟</p>','نعم، احذف كل شيء',true,function(){
     S=defaults();SIM=simDefaults();save();saveSim();setSalaryInput();setBudgetInput();renderAll();toast('تمت إعادة الضبط.');
   });
+});
+
+/* ===================== تحديث الأداة لآخر نسخة ===================== */
+var APP_VERSION='2026-10-02 · 3';
+$('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
+$('#btnUpdate').addEventListener('click',function(){
+  var b=this, label=b.textContent;
+  if(navigator.onLine===false){toast('لا يوجد اتصال بالإنترنت. اتصل بالشبكة ثم أعد المحاولة.','err');return;}
+  b.disabled=true;b.textContent='جارٍ التحديث...';
+  var url=location.href.split('#')[0].split('?')[0];
+  fetch(url,{cache:'reload'}).then(function(r){
+    if(!r.ok) throw new Error('http '+r.status);
+    return r.text();
+  }).then(function(){location.reload();})
+  .catch(function(){b.disabled=false;b.textContent=label;toast('تعذر التحديث. تأكد من الاتصال بالإنترنت وأعد المحاولة.','err');});
 });
 
 /* ===================== التشغيل ===================== */
