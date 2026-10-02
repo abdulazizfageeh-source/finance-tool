@@ -653,6 +653,7 @@ function costOf(kind,p,v,first){
 function applyMonthTo(st,m,first){
   st.loans.forEach(function(l){
     var a=loanActOf(l,m);
+    if(a.a==='dues'||a.a==='manual') l.early=round2(Math.max(0,l.early-a.cost)); /* ينقص السداد المبكر بما دُفع (تقريبي) */
     if(a.a==='dues') l.dueCount=0;
     else if(a.a==='early'){l.status='closed';l.dueCount=0;}
   });
@@ -742,6 +743,7 @@ function renderSim(){
     });
     h+='</tbody></table></div>';
   }
+  h+='<div class="note">مبلغ السداد المبكر ينقص تقريبيا بما تسدده من أقساط مستحقة أو دفعات يدوية في الأشهر السابقة. المبلغ الرسمي يؤخذ من الجهة، وتقدر تصحح الرقم من صفحة الالتزامات.</div>';
   if(k>0) h+='<div class="note">من الشهر الثاني يُضاف قسط مستحق جديد لكل تمويل نشط، لأن قسط الشهر الجديد يحل موعده. فإذا سددت المستحقات في الشهر السابق يظهر هنا قسط واحد، وإذا لم تسددها يتراكم.</div>';
   h+='</div>';
 
@@ -914,9 +916,9 @@ function applyScenario(){
   if(r.over){toast('المبلغ المتاح لا يكفي لهذه العملية.','err');return;}
   S.loans.forEach(function(l){
     var a=loanActOf(l,m); if(a.a==='none') return; any=true;
-    if(a.a==='dues') lines.push('«'+esc(l.name)+'»: سداد '+fmt(a.cost)+' ر.س وتصفير الأقساط المستحقة');
+    if(a.a==='dues') lines.push('«'+esc(l.name)+'»: سداد '+fmt(a.cost)+' ر.س وتصفير الأقساط المستحقة وخفض مبلغ السداد المبكر بنفس المبلغ');
     else if(a.a==='early') lines.push('«'+esc(l.name)+'»: سداد مبكر '+fmt(a.cost)+' ر.س وإغلاق المنتج');
-    else lines.push('«'+esc(l.name)+'»: دفعة يدوية '+fmt(a.cost)+' ر.س (لا تغيّر بيانات التمويل)');
+    else lines.push('«'+esc(l.name)+'»: دفعة يدوية '+fmt(a.cost)+' ر.س وخفض مبلغ السداد المبكر بنفس المبلغ (لا تغيّر القسط الشهري)');
   });
   S.cards.forEach(function(c){
     var a=cardActOf(c,m,true); if(a.a==='none') return; any=true;
@@ -976,7 +978,7 @@ $('#btnReset').addEventListener('click',function(){
 });
 
 /* ===================== تحديث الأداة لآخر نسخة ===================== */
-var APP_VERSION='2026-10-02 · 5';
+var APP_VERSION='2026-10-02 · 6';
 $('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
 $('#btnUpdate').addEventListener('click',function(){
   var b=this, label=b.textContent;
