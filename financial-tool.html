@@ -1039,10 +1039,13 @@ function renderTabs(P){
   if(P.length<MAX_MONTHS) t+='<button class="mtab add" data-mact="add">+ إضافة شهر</button>';
   if(P.length>1) t+='<button class="mtab add" data-mact="del">− حذف آخر شهر</button>';
   $('#monthTabs').innerHTML=t;
-  try{var ac=$('#monthTabs .mtab.active'); if(ac&&ac.scrollIntoView) ac.scrollIntoView({inline:'center',block:'nearest'});}catch(e){}
+  /* تمرير أفقي داخل شريط الأشهر فقط (scrollIntoView كان يرفع الصفحة كلها للأعلى) */
+  try{var box=$('#monthTabs'),ac=$('#monthTabs .mtab.active'); if(box&&ac){
+    box.scrollLeft+=(ac.getBoundingClientRect().left+ac.offsetWidth/2)-(box.getBoundingClientRect().left+box.clientWidth/2);}}catch(e){}
 }
 
 function renderSim(){
+  var keepY=window.pageYOffset||0;
   var P=plan(), k=SIM.cur, r=P[k], h='', hasSal=S.salary>0;
   renderTabs(P);
   $('#budgetLabel').textContent='المبلغ المتاح للسداد في الشهر '+(k+1)+' (ر.س)';
@@ -1176,6 +1179,7 @@ function renderSim(){
             ['الالتزام الشهري في نهاية الخطة: ',money(last.after)],['إجمالي الانخفاض: ',money(round2(P[0].base-last.after))]])+
     '<div class="note">اضغط على أي صف للانتقال إلى ذلك الشهر. الخطة تفترض ثبات الراتب، وأن الأقساط المستحقة وأرصدة البطاقات لا تتغير بين الأشهر إلا بما تسدده في خطتك.</div></div>';
   $('#simBody').innerHTML=h;
+  if(keepY>0&&(window.pageYOffset||0)!==keepY) window.scrollTo(0,keepY); /* لا نرجع المستخدم لأول الصفحة بعد كل تعديل */
 }
 
 function simChange(kind,id,field,value){
@@ -1336,7 +1340,7 @@ $('#btnReset').addEventListener('click',function(){
 });
 
 /* ===================== تحديث الأداة لآخر نسخة ===================== */
-var APP_VERSION='2026-10-04 · 10';
+var APP_VERSION='2026-10-04 · 11';
 $('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
 /* العمل بدون إنترنت: يحتاج ملف sw.js بجانب هذا الملف في نفس المجلد على الاستضافة */
 if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
