@@ -294,7 +294,7 @@ body.wiz #toast{bottom:24px}
       <div class="sec-head"><h3>التزامات شخصية</h3><button class="btn primary sm" id="addPerson">+ إضافة التزام شخصي</button></div>
       <div id="personSummary"></div>
       <div id="personTable"></div>
-      <div class="note">للتسجيل والمتابعة فقط (مثل دين لشخص). لا تدخل في الالتزام الشهري ولا في نسبة الـ45% ولا في المحاكي.</div>
+      <div class="note">للتسجيل والمتابعة فقط (مثل دين لشخص). لا تدخل في الالتزام الشهري ولا في نسبة الـ45%. عند تسجيل دفعة تختار هل تُخصم من مبلغ المحاكي (الشهر 1) أم تبقى خارجه.</div>
     </div>
   </section>
 
@@ -421,7 +421,7 @@ function defaults(){return {salary:0,loans:[],cards:[],personal:[]};}
 function isB(l){return l&&l.kind==='bnpl';}
 var MIN_MONTHS=5, MAX_MONTHS=12;
 var LOAN_A={none:1,dues:1,early:1,manual:1}, CARD_A={none:1,min:1,partial:1,full:1};
-function newMonth(){return {budget:0,carry:false,loans:{},cards:{}};}
+function newMonth(){return {budget:0,carry:false,personal:0,loans:{},cards:{}};}
 function simDefaults(){return sanSim(null);}
 function sanLoan(x){
   x=x||{};
@@ -465,7 +465,7 @@ function sanActs(o,allowed){
 }
 function sanMonth(m){
   m=m||{};
-  return {budget:clampNum(m.budget),carry:m.carry===true,loans:sanActs(m.loans,LOAN_A),cards:sanActs(m.cards,CARD_A)};
+  return {budget:clampNum(m.budget),carry:m.carry===true,personal:clampNum(m.personal),loans:sanActs(m.loans,LOAN_A),cards:sanActs(m.cards,CARD_A)};
 }
 /* يقبل الصيغة الجديدة (months) والقديمة (شهر واحد) */
 function sanSim(s){
@@ -865,12 +865,24 @@ function payPerson(id){
   var p=S.personal.filter(function(x){return x.id===id;})[0]; if(!p) return;
   openModal({title:'تسجيل دفعة: '+nm(p.name),
     body:'<div class="form"><div class="note" style="margin:0">المتبقي حاليا: <b>'+fmt(personLeft(p))+'</b> ر.س</div>'+
-     '<label>مبلغ الدفعة (ر.س)<input type="text" id="f-pay" inputmode="decimal" placeholder="0.00" autocomplete="off"></label></div>',
+     '<label>مبلغ الدفعة (ر.س)<input type="text" id="f-pay" inputmode="decimal" placeholder="0.00" autocomplete="off"></label>'+
+     '<label>من أين سُدّدت؟<select id="f-src"><option value="out">من خارج المحاكي (لا يؤثر على المحاكي)</option><option value="sim">من مبلغ المحاكي (يُخصم من المتاح في الشهر 1)</option></select></label>'+
+     '<div class="note" id="f-srcnote" style="display:none">المتبقي في مبلغ المحاكي للشهر 1: <b>'+fmt(Math.max(0,plan()[0].remaining))+'</b> ر.س</div></div>',
+    afterOpen:function(ov){
+      $('#f-src',ov).addEventListener('change',function(){$('#f-srcnote',ov).style.display=this.value==='sim'?'':'none';});
+    },
     onOk:function(ov){
       var a=parseNum($('#f-pay',ov).value); if(a.err) return a.err;
       if(!(a.v>0)) return 'أدخل مبلغ الدفعة.';
       if(a.v>personLeft(p)+0.004) return 'المبلغ أكبر من المتبقي.';
-      p.paid=round2(Math.min(p.total,p.paid+a.v));save();renderAll();toast('تم تسجيل الدفعة.');
+      var fromSim=$('#f-src',ov).value==='sim';
+      if(fromSim){
+        var r0=plan()[0];
+        if(a.v>r0.remaining+0.004) return 'المتبقي في مبلغ المحاكي للشهر 1 ('+fmt(Math.max(0,r0.remaining))+' ر.س) لا يكفي لهذه الدفعة.';
+        SIM.months[0].personal=round2(SIM.months[0].personal+a.v);saveSim();
+      }
+      p.paid=round2(Math.min(p.total,p.paid+a.v));save();renderAll();
+      toast(fromSim?'تم تسجيل الدفعة وخصمها من مبلغ المحاكي (الشهر 1).':'تم تسجيل الدفعة.');
     }});
 }
 $('#addBnpl').addEventListener('click',function(){openBnpl();});
@@ -1016,10 +1028,10 @@ function plan(){
       if(c.status==='closed') return;
       if(a.closes) closedC.push(nm(c.name)); else keepC.push(nm(c.name));
     });
-    used=round2(used);
+    var pers=clampNum(m.personal); used=round2(used+pers); /* دفعات التزامات شخصية سُدّدت من مبلغ المحاكي (لا تغيّر الالتزام الشهري) */
     var after=cloneSt(st); applyMonthTo(after,m,i===0);
     var aft=oblOf(after), drop=round2(before-aft);
-    var r={i:i,stBefore:st,carried:round2(carried),budget:budget,used:used,remaining:round2(budget-used),
+    var r={i:i,stBefore:st,carried:round2(carried),budget:budget,used:used,pers:pers,remaining:round2(budget-used),
       over:used>budget+0.004,before:before,after:aft,drop:drop,dropPct:before>0?drop/before*100:0,
       evB:evalRatio(before,S.salary),evA:evalRatio(aft,S.salary),
       closedL:closedL,keepL:keepL,closedC:closedC,keepC:keepC,
@@ -1050,7 +1062,7 @@ function renderSim(){
   renderTabs(P);
   $('#budgetLabel').textContent='المبلغ المتاح للسداد في الشهر '+(k+1)+' (ر.س)';
   $('#budgetStats').innerHTML=stat('المبلغ الأساسي',money(r.budget),r.carried>0?'منه مرحّل من الشهر السابق: '+fmt(r.carried):'')+
-    stat('المستخدم حتى الآن',money(r.used))+
+    stat('المستخدم حتى الآن',money(r.used),r.pers>0?'منها لالتزامات شخصية: '+fmt(r.pers):'')+
     stat('المتبقي','<span class="'+(r.remaining<=0&&r.budget>0?'t-near':'')+'">'+money(r.remaining)+'</span>');
   if(k>0){
     $('#carryBox').innerHTML='<label class="chk"><input type="checkbox" id="carryChk"'+(SIM.months[k].carry?' checked':'')+'> ترحيل المتبقي من الشهر '+k+' ('+fmt(Math.max(0,P[k-1].remaining))+' ر.س) إلى ميزانية هذا الشهر</label>';
@@ -1340,7 +1352,7 @@ $('#btnReset').addEventListener('click',function(){
 });
 
 /* ===================== تحديث الأداة لآخر نسخة ===================== */
-var APP_VERSION='2026-10-04 · 11';
+var APP_VERSION='2026-10-05 · 12';
 $('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
 /* العمل بدون إنترنت: يحتاج ملف sw.js بجانب هذا الملف في نفس المجلد على الاستضافة */
 if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
