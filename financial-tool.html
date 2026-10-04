@@ -122,12 +122,13 @@ input.big{font-size:1.5rem;font-weight:800;padding:12px 15px;min-height:56px}
 .fl{display:block;font-weight:800;margin-bottom:8px}
 
 /* التبويب المقسّم */
-.seg{display:flex;background:var(--field);border:1px solid var(--line);border-radius:16px;padding:4px;gap:4px;margin-bottom:14px}
-.seg button{flex:1;border:0;background:none;font-weight:800;font-size:.9rem;padding:11px 6px;border-radius:12px;color:var(--muted);cursor:pointer}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--field);border:1px solid var(--line);border-radius:16px;padding:4px;gap:4px;margin-bottom:14px}
+.seg button{border:0;background:none;font-weight:800;font-size:.9rem;padding:11px 6px;border-radius:12px;color:var(--muted);cursor:pointer}
 .seg button.active{background:var(--card);color:var(--brand);box-shadow:0 1px 5px rgba(16,24,40,.14)}
 .seg .cnt{display:inline-block;min-width:22px;padding:0 6px;margin-inline-start:4px;border-radius:99px;background:var(--line);color:var(--ink);font-size:.74rem}
 .seg button.active .cnt{background:var(--brand-soft);color:var(--brand)}
-#page-commit[data-tab=loans] #sec-cards,#page-commit[data-tab=cards] #sec-loans{display:none}
+#page-commit>.panel{display:none}
+#page-commit[data-tab=loans] #sec-loans,#page-commit[data-tab=cards] #sec-cards,#page-commit[data-tab=bnpl] #sec-bnpl,#page-commit[data-tab=personal] #sec-personal{display:block}
 
 /* الجداول */
 .tablewrap{overflow-x:auto}
@@ -265,6 +266,8 @@ body.wiz #toast{bottom:24px}
     <div class="seg" id="ctabs">
       <button data-ctab="loans" id="ctabLoans">القروض والتمويلات</button>
       <button data-ctab="cards" id="ctabCards">البطاقات الائتمانية</button>
+      <button data-ctab="bnpl" id="ctabBnpl">اشتري الآن وادفع لاحقا</button>
+      <button data-ctab="personal" id="ctabPersonal">التزامات شخصية</button>
     </div>
     <div class="panel" id="sec-loans">
       <div class="sec-head"><h3>القروض والتمويلات</h3><button class="btn primary sm" id="addLoan">+ إضافة قرض أو تمويل</button></div>
@@ -277,6 +280,18 @@ body.wiz #toast{bottom:24px}
       <div id="cardSummary"></div>
       <div id="cardTable"></div>
       <div class="note">الالتزام الشهري للبطاقة = الحد الائتماني × نسبة الاحتساب ÷ 100. البطاقة «المخطط لإغلاقها» ما زالت تُحتسب حتى تصبح «مغلقة».</div>
+    </div>
+    <div class="panel" id="sec-bnpl">
+      <div class="sec-head"><h3>اشتري الآن وادفع لاحقا</h3><button class="btn primary sm" id="addBnpl">+ إضافة التزام</button></div>
+      <div id="bnplSummary"></div>
+      <div id="bnplTable"></div>
+      <div class="note">يُحسب القسط ضمن الالتزام الشهري ونسبة الـ45% ما دام الالتزام نشطا ولم تنتهِ أقساطه. عند دفع كل الأقساط يُغلق تلقائيا ويرجع الالتزام الشهري إلى ما قبله. وتظهر هذه الالتزامات في المحاكي.</div>
+    </div>
+    <div class="panel" id="sec-personal">
+      <div class="sec-head"><h3>التزامات شخصية</h3><button class="btn primary sm" id="addPerson">+ إضافة التزام شخصي</button></div>
+      <div id="personSummary"></div>
+      <div id="personTable"></div>
+      <div class="note">للتسجيل والمتابعة فقط (مثل دين لشخص). لا تدخل في الالتزام الشهري ولا في نسبة الـ45% ولا في المحاكي.</div>
     </div>
   </section>
 
@@ -399,16 +414,31 @@ function toast(msg,type){
 }
 
 /* ===================== البيانات ===================== */
-function defaults(){return {salary:0,loans:[],cards:[]};}
+function defaults(){return {salary:0,loans:[],cards:[],personal:[]};}
+function isB(l){return l&&l.kind==='bnpl';}
 var MIN_MONTHS=5, MAX_MONTHS=12;
 var LOAN_A={none:1,dues:1,early:1,manual:1}, CARD_A={none:1,min:1,partial:1,full:1};
 function newMonth(){return {budget:0,carry:false,loans:{},cards:{}};}
 function simDefaults(){return sanSim(null);}
 function sanLoan(x){
   x=x||{};
-  return {id:String(x.id||uid()),status:x.status==='closed'?'closed':'active',
+  var o={id:String(x.id||uid()),status:x.status==='closed'?'closed':'active',
     name:String(x.name||'').slice(0,100),installment:clampNum(x.installment),
     dueCount:Math.min(10,Math.max(0,Math.floor(Number(x.dueCount)||0))),early:clampNum(x.early)};
+  if(x.kind==='bnpl'){ /* اشتري الآن وادفع لاحقا: عدد أقساط محدد، والمتبقي يُحسب من الأقساط المدفوعة */
+    o.kind='bnpl';o.total=clampNum(x.total);
+    o.count=Math.min(60,Math.max(1,Math.floor(Number(x.count))||4));
+    o.paid=Math.min(o.count,Math.max(0,Math.floor(Number(x.paid))||0));
+    o.dueCount=Math.min(o.dueCount,o.count-o.paid);o.early=0;
+    if(o.paid>=o.count) o.status='closed';
+  }
+  return o;
+}
+function sanPerson(x){
+  x=x||{};
+  var t=clampNum(x.total);
+  return {id:String(x.id||uid()),name:String(x.name||'').slice(0,100),total:t,
+    paid:Math.min(t,clampNum(x.paid)),note:String(x.note||'').slice(0,300)};
 }
 function sanCard(x){
   x=x||{};
@@ -421,7 +451,8 @@ function sanData(d){
   d=d||{};
   return {salary:clampNum(d.salary),
     loans:(Array.isArray(d.loans)?d.loans:[]).map(sanLoan),
-    cards:(Array.isArray(d.cards)?d.cards:[]).map(sanCard)};
+    cards:(Array.isArray(d.cards)?d.cards:[]).map(sanCard),
+    personal:(Array.isArray(d.personal)?d.personal:[]).map(sanPerson)};
 }
 function sanActs(o,allowed){
   var out={};
@@ -461,6 +492,14 @@ function saveSim(){writeStore(SIMKEY,SIM);indicator();}
 /* ===================== الحسابات ===================== */
 function loanMonthly(l){return l.status==='active'?l.installment:0;}
 function loanDues(l){return round2(l.installment*l.dueCount);}
+function loanEarly(l){return isB(l)?round2(l.installment*Math.max(0,l.count-l.paid)):l.early;}
+/* يحل قسط الشهر الجديد: في BNPL لا يتجاوز عدد الأقساط المتبقية */
+function accrue(l,cap){
+  if(l.status!=='active') return;
+  if(isB(l)) l.dueCount=Math.min(l.dueCount+1,l.count-l.paid);
+  else l.dueCount=cap?Math.min(10,l.dueCount+1):l.dueCount+1;
+}
+function personLeft(p){return round2(Math.max(0,p.total-p.paid));}
 function cardMonthly(c){return c.status==='closed'?0:round2(c.limit*c.pct/100);}
 /* الحد الأدنى المستحق للدفع (يختلف تماما عن نسبة احتساب الالتزام الشهري):
    الشهر الحالي: القيمة اليدوية إن وُجدت (>0) وإلا 5% من الرصيد. الأشهر التالية: 5% من الرصيد المتبقي دائما. */
@@ -474,9 +513,13 @@ function effectiveMinDue(c,isFirst){
 
 function totals(){
   var t={loanMonthly:0,cardMonthly:0,total:0,dues:0,loanDues:0,cardBal:0,early:0,
-    loansActive:0,loansClosed:0,cardsActive:0,cardsClosed:0,limits:0,balAll:0,cardMin:0};
+    loansActive:0,loansClosed:0,cardsActive:0,cardsClosed:0,limits:0,balAll:0,cardMin:0,
+    bnplMonthly:0,bnplDues:0,bnplLeft:0,bnplActive:0,bnplClosed:0,personLeft:0};
   S.loans.forEach(function(l){
-    if(l.status==='active'){t.loansActive++;t.loanMonthly+=l.installment;t.loanDues+=loanDues(l);t.early+=l.early;}
+    if(isB(l)){
+      if(l.status==='active'){t.bnplActive++;t.bnplMonthly+=l.installment;t.bnplDues+=loanDues(l);t.bnplLeft+=loanEarly(l);}
+      else t.bnplClosed++;
+    }else if(l.status==='active'){t.loansActive++;t.loanMonthly+=l.installment;t.loanDues+=loanDues(l);t.early+=l.early;}
     else t.loansClosed++;
   });
   S.cards.forEach(function(c){
@@ -484,9 +527,11 @@ function totals(){
     t.limits+=c.limit; t.balAll+=c.balance;
   });
   t.loanMonthly=round2(t.loanMonthly);t.cardMonthly=round2(t.cardMonthly);
-  t.total=round2(t.loanMonthly+t.cardMonthly);
+  t.bnplMonthly=round2(t.bnplMonthly);t.bnplDues=round2(t.bnplDues);t.bnplLeft=round2(t.bnplLeft);
+  t.total=round2(t.loanMonthly+t.cardMonthly+t.bnplMonthly);
   t.loanDues=round2(t.loanDues);t.cardBal=round2(t.cardBal);
-  t.cardMin=round2(t.cardMin);t.dues=round2(t.loanDues+t.cardMin);t.early=round2(t.early);
+  t.cardMin=round2(t.cardMin);t.dues=round2(t.loanDues+t.bnplDues+t.cardMin);t.early=round2(t.early);
+  S.personal.forEach(function(p){t.personLeft+=personLeft(p);});t.personLeft=round2(t.personLeft); /* خارج الالتزام الشهري */
   return t;
 }
 function evalRatio(total,salary){
@@ -565,12 +610,15 @@ function renderDash(){
     stat('إجمالي الالتزام الشهري الحالي',money(t.total))+
     stat('إجمالي أقساط القروض والتمويلات',money(t.loanMonthly),t.loansActive+' منتج نشط')+
     stat('إجمالي التزام البطاقات',money(t.cardMonthly),t.cardsActive+' بطاقة غير مغلقة')+
+    ((t.bnplActive+t.bnplClosed)?stat('إجمالي أقساط «اشتري الآن وادفع لاحقا»',money(t.bnplMonthly),t.bnplActive+' التزام نشط • المتبقي عليها: '+fmt(t.bnplLeft)+' ر.س','span'):'')+
   '</div>';
   h+='<div class="sub">المبالغ المستحقة</div><div class="grid">'+
-    stat('إجمالي المبالغ المستحقة حاليا',money(t.dues),'أقساط: '+fmt(t.loanDues)+' • حد أدنى للبطاقات: '+fmt(t.cardMin))+
+    stat('إجمالي المبالغ المستحقة حاليا',money(t.dues),'أقساط: '+fmt(round2(t.loanDues+t.bnplDues))+' • حد أدنى للبطاقات: '+fmt(t.cardMin))+
     stat('مجموع أرصدة البطاقات',money(t.balAll),'الرصيد الكامل وليس المطلوب دفعه الآن')+
     stat('إجمالي مبالغ السداد المبكر',money(t.early),'للتمويلات النشطة','span')+
   '</div>';
+  if(S.personal.length) h+='<div class="sub">خارج الحساب</div><div class="grid">'+
+    stat('التزامات شخصية (المتبقي)',money(t.personLeft),S.personal.length+' التزام • لا تدخل في الالتزام الشهري ولا النسبة','span')+'</div>';
   $('#page-dash').innerHTML=h;
 }
 $('#page-dash').addEventListener('click',function(e){
@@ -580,7 +628,7 @@ $('#page-dash').addEventListener('click',function(e){
 /* ===================== الصفحة 2: الالتزامات ===================== */
 function sumBox(items){return '<div class="sumline">'+items.map(function(i){return '<div><span>'+i[0].replace(/:\s*$/,'')+'</span><b>'+i[1]+'</b></div>';}).join('')+'</div>';}
 function opts(map,sel){return Object.keys(map).map(function(k){return '<option value="'+k+'"'+(k===sel?' selected':'')+'>'+map[k]+'</option>';}).join('');}
-function dueOpts(sel){var s='';for(var i=0;i<=10;i++)s+='<option value="'+i+'"'+(i===sel?' selected':'')+'>'+i+'</option>';return s;}
+function dueOpts(sel,max){var s='';for(var i=0;i<=(max==null?10:max);i++)s+='<option value="'+i+'"'+(i===sel?' selected':'')+'>'+i+'</option>';return s;}
 
 var CTAB='loans';
 function applyCtab(){
@@ -589,11 +637,13 @@ function applyCtab(){
 }
 $('#ctabs').addEventListener('click',function(e){
   var b=e.target.closest('button[data-ctab]'); if(!b) return;
-  CTAB=b.dataset.ctab==='cards'?'cards':'loans';applyCtab();
+  CTAB={cards:'cards',bnpl:'bnpl',personal:'personal'}[b.dataset.ctab]||'loans';applyCtab();
 });
 function renderCommit(){
-  var t=totals();
-  $('#ctabLoans').innerHTML='القروض والتمويلات<span class="cnt">'+S.loans.length+'</span>';
+  var t=totals(), LN=S.loans.filter(function(l){return !isB(l);}), BN=S.loans.filter(isB);
+  $('#ctabBnpl').innerHTML='اشتري الآن وادفع لاحقا<span class="cnt">'+BN.length+'</span>';
+  $('#ctabPersonal').innerHTML='التزامات شخصية<span class="cnt">'+S.personal.length+'</span>';
+  $('#ctabLoans').innerHTML='القروض والتمويلات<span class="cnt">'+LN.length+'</span>';
   $('#ctabCards').innerHTML='البطاقات الائتمانية<span class="cnt">'+S.cards.length+'</span>';
   applyCtab();
   $('#loanSummary').innerHTML=sumBox([
@@ -601,11 +651,11 @@ function renderCommit(){
     ['مجموع المبالغ المستحقة حاليا: ',money(t.loanDues)],
     ['مجموع السداد المبكر: ',money(t.early)],
     ['النشطة: ',t.loansActive],['المغلقة: ',t.loansClosed]]);
-  if(!S.loans.length){
+  if(!LN.length){
     $('#loanTable').innerHTML='<div class="empty">لا توجد قروض أو تمويلات. اضغط «إضافة قرض أو تمويل».</div>';
   }else{
     var h='<div class="tablewrap"><table class="resp"><thead><tr><th>الحالة</th><th>الجهة / المنتج</th><th>القسط الشهري</th><th>الأقساط المستحقة</th><th>مبلغ المستحق</th><th>السداد المبكر</th><th>إجراءات</th></tr></thead><tbody>';
-    S.loans.forEach(function(l){
+    LN.forEach(function(l){
       h+='<tr class="'+(l.status==='closed'?'closed':'')+'">'+
         '<td data-label="الحالة"><select data-f="loan-status" data-id="'+esc(l.id)+'">'+opts(LOAN_STATUS,l.status)+'</select></td>'+
         '<td data-label="الجهة / المنتج">'+(esc(l.name)||'<span style="color:var(--muted)">بدون اسم</span>')+'</td>'+
@@ -616,6 +666,45 @@ function renderCommit(){
         '<td class="act"><button class="btn sm" data-act="edit-loan" data-id="'+esc(l.id)+'">تعديل</button><button class="btn sm danger" data-act="del-loan" data-id="'+esc(l.id)+'">حذف</button></td></tr>';
     });
     $('#loanTable').innerHTML=h+'</tbody></table></div>';
+  }
+  $('#bnplSummary').innerHTML=sumBox([
+    ['مجموع الأقساط الشهرية (النشطة): ',money(t.bnplMonthly)],
+    ['مجموع المبالغ المستحقة حاليا: ',money(t.bnplDues)],
+    ['إجمالي المتبقي عليها: ',money(t.bnplLeft)],
+    ['النشطة: ',t.bnplActive],['المنتهية: ',t.bnplClosed]]);
+  if(!BN.length){
+    $('#bnplTable').innerHTML='<div class="empty">لا توجد التزامات. اضغط «إضافة التزام».</div>';
+  }else{
+    var b='<div class="tablewrap"><table class="resp"><thead><tr><th>الحالة</th><th>الجهة / المنتج</th><th>القسط</th><th>الأقساط</th><th>المستحقة الآن</th><th>مبلغ المستحق</th><th>المتبقي كاملا</th><th>إجراءات</th></tr></thead><tbody>';
+    BN.forEach(function(l){
+      b+='<tr class="'+(l.status==='closed'?'closed':'')+'">'+
+        '<td data-label="الحالة"><select data-f="loan-status" data-id="'+esc(l.id)+'">'+opts(LOAN_STATUS,l.status)+'</select></td>'+
+        '<td data-label="الجهة / المنتج">'+(esc(l.name)||'<span style="color:var(--muted)">بدون اسم</span>')+'</td>'+
+        '<td class="num" data-label="القسط">'+money(l.installment)+'</td>'+
+        '<td class="num" data-label="الأقساط">'+l.paid+' من '+l.count+' مدفوعة</td>'+
+        '<td data-label="المستحقة الآن"><select data-f="loan-due" data-id="'+esc(l.id)+'">'+dueOpts(l.dueCount,Math.min(10,l.count-l.paid))+'</select></td>'+
+        '<td class="num" data-label="مبلغ المستحق">'+money(loanDues(l))+'</td>'+
+        '<td class="num" data-label="المتبقي كاملا">'+money(loanEarly(l))+'</td>'+
+        '<td class="act"><button class="btn sm" data-act="edit-bnpl" data-id="'+esc(l.id)+'">تعديل</button><button class="btn sm danger" data-act="del-loan" data-id="'+esc(l.id)+'">حذف</button></td></tr>';
+    });
+    $('#bnplTable').innerHTML=b+'</tbody></table></div>';
+  }
+  $('#personSummary').innerHTML=sumBox([['إجمالي المتبقي: ',money(t.personLeft)],['عدد الالتزامات: ',S.personal.length]]);
+  if(!S.personal.length){
+    $('#personTable').innerHTML='<div class="empty">لا توجد التزامات شخصية. اضغط «إضافة التزام شخصي».</div>';
+  }else{
+    var q='<div class="tablewrap"><table class="resp"><thead><tr><th>الشخص / الجهة</th><th>المبلغ الإجمالي</th><th>المسدد</th><th>المتبقي</th><th>ملاحظة</th><th>إجراءات</th></tr></thead><tbody>';
+    S.personal.forEach(function(p){
+      var left=personLeft(p);
+      q+='<tr class="'+(left<=0?'closed':'')+'">'+
+        '<td data-label="الشخص / الجهة">'+(esc(p.name)||'<span style="color:var(--muted)">بدون اسم</span>')+'</td>'+
+        '<td class="num" data-label="المبلغ الإجمالي">'+money(p.total)+'</td>'+
+        '<td class="num" data-label="المسدد">'+money(p.paid)+'</td>'+
+        '<td class="num" data-label="المتبقي"><b>'+(left<=0?'مسدد':money(left))+'</b></td>'+
+        '<td data-label="ملاحظة">'+(esc(p.note)||'—')+'</td>'+
+        '<td class="act"><button class="btn sm" data-act="pay-per" data-id="'+esc(p.id)+'">تسجيل دفعة</button><button class="btn sm" data-act="edit-per" data-id="'+esc(p.id)+'">تعديل</button><button class="btn sm danger" data-act="del-per" data-id="'+esc(p.id)+'">حذف</button></td></tr>';
+    });
+    $('#personTable').innerHTML=q+'</tbody></table></div>';
   }
   $('#cardSummary').innerHTML=sumBox([
     ['مجموع أرصدة البطاقات: ',money(t.balAll)],
@@ -706,6 +795,83 @@ function openCard(id){
       save();renderAll();
     }});
 }
+function bnplForm(l){
+  l=l||{status:'active',name:'',total:0,count:4,installment:0,paid:0,dueCount:0};
+  var cn='';for(var i=1;i<=24;i++) cn+='<option value="'+i+'"'+(i===l.count?' selected':'')+'>'+i+'</option>';
+  return '<div class="form">'+
+   '<label>الحالة<select id="f-status">'+opts(LOAN_STATUS,l.status)+'</select></label>'+
+   '<label>اسم الجهة أو المنتج (مثل تابي أو تمارا)<input type="text" id="f-name" value="'+esc(l.name)+'" autocomplete="off"></label>'+
+   '<label>المبلغ الإجمالي للمشتريات (ر.س) <span style="font-weight:400;color:var(--muted)">— اختياري، يحسب القسط تلقائيا</span><input type="text" id="f-total" inputmode="decimal" value="'+(l.total||'')+'" placeholder="0.00" autocomplete="off"></label>'+
+   '<label>عدد الأقساط الكلي<select id="f-count">'+cn+'</select></label>'+
+   '<label>قيمة القسط الواحد (ر.س)<input type="text" id="f-inst" inputmode="decimal" value="'+(l.installment||'')+'" placeholder="0.00" autocomplete="off"></label>'+
+   '<label>عدد الأقساط المدفوعة<select id="f-paid"></select></label>'+
+   '<label>عدد الأقساط المستحقة حاليا<select id="f-due"></select></label>'+
+   '<div class="note">المتبقي كاملا (تلقائي): <b id="f-left">0.00</b> ر.س</div></div>';
+}
+function openBnpl(id){
+  var cur=id?S.loans.filter(function(x){return x.id===id;})[0]:null, dirty=!!(cur&&cur.installment>0);
+  openModal({title:cur?'تعديل التزام اشتري الآن وادفع لاحقا':'إضافة التزام اشتري الآن وادفع لاحقا',body:bnplForm(cur),
+    afterOpen:function(ov){
+      function fill(sel,max,v){var h='';for(var i=0;i<=max;i++)h+='<option value="'+i+'"'+(i===Math.min(v,max)?' selected':'')+'>'+i+'</option>';sel.innerHTML=h;}
+      var ps=$('#f-paid',ov), ds=$('#f-due',ov);
+      function upd(){
+        var n=Number($('#f-count',ov).value), tot=parseNum($('#f-total',ov).value).v||0;
+        if(!dirty&&tot>0) $('#f-inst',ov).value=fmt(round2(tot/n)).replace(/,/g,'');
+        var pv=Number(ps.value)||0; fill(ps,n,pv); pv=Number(ps.value);
+        fill(ds,Math.min(10,n-pv),Number(ds.value)||0);
+        var i=parseNum($('#f-inst',ov).value).v||0;
+        $('#f-left',ov).textContent=fmt(round2(i*(n-pv)));
+      }
+      $('#f-total',ov).addEventListener('input',function(){dirty=false;upd();});
+      $('#f-inst',ov).addEventListener('input',function(){dirty=true;upd();});
+      $('#f-count',ov).addEventListener('change',upd);ps.addEventListener('change',upd);
+      fill(ps,24,cur?cur.paid:0);fill(ds,10,cur?cur.dueCount:0);upd();
+    },
+    onOk:function(ov){
+      var name=$('#f-name',ov).value.trim();
+      if(!name) return 'أدخل اسم الجهة أو المنتج.';
+      var i=parseNum($('#f-inst',ov).value); if(i.err) return 'قيمة القسط: '+i.err;
+      if(!(i.v>0)) return 'أدخل قيمة القسط الواحد (أو المبلغ الإجمالي ليُحسب تلقائيا).';
+      var t=parseNum($('#f-total',ov).value); if(t.err) return 'المبلغ الإجمالي: '+t.err;
+      var rec={id:cur?cur.id:uid(),kind:'bnpl',status:$('#f-status',ov).value,name:name,installment:i.v,total:t.v,
+        count:Number($('#f-count',ov).value),paid:Number($('#f-paid',ov).value),dueCount:Number($('#f-due',ov).value)};
+      if(cur) S.loans[S.loans.indexOf(cur)]=sanLoan(rec); else S.loans.push(sanLoan(rec));
+      save();renderAll();
+    }});
+}
+function openPerson(id){
+  var cur=id?S.personal.filter(function(x){return x.id===id;})[0]:null, p=cur||{name:'',total:0,paid:0,note:''};
+  openModal({title:cur?'تعديل التزام شخصي':'إضافة التزام شخصي',
+    body:'<div class="form">'+
+     '<label>اسم الشخص أو الجهة<input type="text" id="f-name" value="'+esc(p.name)+'" autocomplete="off"></label>'+
+     '<label>المبلغ الإجمالي (ر.س)<input type="text" id="f-total" inputmode="decimal" value="'+(p.total||'')+'" placeholder="0.00" autocomplete="off"></label>'+
+     '<label>المسدد حتى الآن (ر.س)<input type="text" id="f-paid" inputmode="decimal" value="'+(p.paid||'')+'" placeholder="0.00" autocomplete="off"></label>'+
+     '<label>ملاحظة (اختياري)<input type="text" id="f-note" value="'+esc(p.note)+'" autocomplete="off"></label></div>',
+    onOk:function(ov){
+      var name=$('#f-name',ov).value.trim(); if(!name) return 'أدخل اسم الشخص أو الجهة.';
+      var t=parseNum($('#f-total',ov).value); if(t.err) return 'المبلغ الإجمالي: '+t.err;
+      if(!(t.v>0)) return 'أدخل المبلغ الإجمالي.';
+      var d=parseNum($('#f-paid',ov).value); if(d.err) return 'المسدد: '+d.err;
+      if(d.v>t.v) return 'المسدد أكبر من المبلغ الإجمالي.';
+      var rec={id:cur?cur.id:uid(),name:name,total:t.v,paid:d.v,note:$('#f-note',ov).value.trim()};
+      if(cur) S.personal[S.personal.indexOf(cur)]=sanPerson(rec); else S.personal.push(sanPerson(rec));
+      save();renderAll();
+    }});
+}
+function payPerson(id){
+  var p=S.personal.filter(function(x){return x.id===id;})[0]; if(!p) return;
+  openModal({title:'تسجيل دفعة: '+nm(p.name),
+    body:'<div class="form"><div class="note" style="margin:0">المتبقي حاليا: <b>'+fmt(personLeft(p))+'</b> ر.س</div>'+
+     '<label>مبلغ الدفعة (ر.س)<input type="text" id="f-pay" inputmode="decimal" placeholder="0.00" autocomplete="off"></label></div>',
+    onOk:function(ov){
+      var a=parseNum($('#f-pay',ov).value); if(a.err) return a.err;
+      if(!(a.v>0)) return 'أدخل مبلغ الدفعة.';
+      if(a.v>personLeft(p)+0.004) return 'المبلغ أكبر من المتبقي.';
+      p.paid=round2(Math.min(p.total,p.paid+a.v));save();renderAll();toast('تم تسجيل الدفعة.');
+    }});
+}
+$('#addBnpl').addEventListener('click',function(){openBnpl();});
+$('#addPerson').addEventListener('click',function(){openPerson();});
 $('#addLoan').addEventListener('click',function(){openLoan();});
 $('#addCard').addEventListener('click',function(){openCard();});
 
@@ -715,7 +881,7 @@ $('#page-commit').addEventListener('change',function(e){
   if(f==='loan-status'||f==='loan-due'){
     l=S.loans.filter(function(x){return x.id===id;})[0]; if(!l) return;
     if(f==='loan-status') l.status=e.target.value==='closed'?'closed':'active';
-    else l.dueCount=Math.min(10,Math.max(0,parseInt(e.target.value,10)||0));
+    else l.dueCount=Math.min(isB(l)?Math.min(10,l.count-l.paid):10,Math.max(0,parseInt(e.target.value,10)||0));
   }else if(f==='card-status'){
     c=S.cards.filter(function(x){return x.id===id;})[0]; if(!c) return;
     c.status=CARD_STATUS[e.target.value]?e.target.value:'active';
@@ -726,6 +892,14 @@ $('#page-commit').addEventListener('click',function(e){
   var b=e.target.closest('[data-act]'); if(!b) return;
   var id=b.dataset.id, a=b.dataset.act;
   if(a==='edit-loan') openLoan(id);
+  else if(a==='edit-bnpl') openBnpl(id);
+  else if(a==='edit-per') openPerson(id);
+  else if(a==='pay-per') payPerson(id);
+  else if(a==='del-per'){
+    var pp=S.personal.filter(function(x){return x.id===id;})[0]; if(!pp) return;
+    confirmDlg('حذف التزام شخصي','<p>هل تريد حذف «'+esc(pp.name||'بدون اسم')+'» نهائيا؟</p>','حذف',true,function(){
+      S.personal=S.personal.filter(function(x){return x.id!==id;});save();renderAll();toast('تم الحذف.');});
+  }
   else if(a==='edit-card') openCard(id);
   else if(a==='del-loan'){
     var l=S.loans.filter(function(x){return x.id===id;})[0]; if(!l) return;
@@ -765,6 +939,7 @@ $('#salaryInput').addEventListener('change',setSalaryInput);
 
 /* ===================== الصفحة 4: المحاكي (خطة متعددة الأشهر) ===================== */
 var LOAN_ACT={none:'لا إجراء',dues:'سداد الأقساط المستحقة فقط',early:'سداد مبكر وإغلاق المنتج',manual:'دفعة يدوية'};
+var BNPL_ACT={none:'لا إجراء',dues:'سداد القسط المستحق',early:'سداد المتبقي وإغلاق الالتزام'};
 var CARD_ACT={none:'لا إجراء',min:'سداد الحد الأدنى المستحق',partial:'دفعة جزئية',full:'سداد كامل وإغلاق البطاقة'};
 
 function purgeSim(key,id){SIM.months.forEach(function(m){delete m[key][id];});}
@@ -783,8 +958,10 @@ function oblOf(st){
 function loanActOf(l,m){
   if(l.status!=='active') return {a:'none',amt:0,cost:0,closes:false,locked:true};
   var v=m.loans[l.id]||{a:'none',amt:0}, a=v.a||'none', amt=clampNum(v.amt), cost=0;
-  if(a==='dues') cost=loanDues(l); else if(a==='early') cost=l.early; else if(a==='manual') cost=amt;
-  return {a:a,amt:amt,cost:round2(cost),closes:a==='early',locked:false};
+  if(isB(l)&&a==='manual') a='none';
+  if(a==='dues') cost=loanDues(l); else if(a==='early') cost=loanEarly(l); else if(a==='manual') cost=amt;
+  var closes=(a==='early')||(isB(l)&&a==='dues'&&l.paid+l.dueCount>=l.count);
+  return {a:a,amt:amt,cost:round2(cost),closes:closes,locked:false};
 }
 function cardActOf(c,m,first){
   if(c.status==='closed') return {a:'none',amt:0,cost:0,closes:false,locked:true};
@@ -801,6 +978,11 @@ function costOf(kind,p,v,first){
 function applyMonthTo(st,m,first){
   st.loans.forEach(function(l){
     var a=loanActOf(l,m);
+    if(isB(l)){
+      if(a.a==='dues'){l.paid=Math.min(l.count,l.paid+l.dueCount);l.dueCount=0;if(l.paid>=l.count)l.status='closed';}
+      else if(a.a==='early'){l.paid=l.count;l.dueCount=0;l.status='closed';}
+      return;
+    }
     if(a.a==='dues'||a.a==='manual') l.early=round2(Math.max(0,l.early-a.cost)); /* ينقص السداد المبكر بما دُفع (تقريبي) */
     if(a.a==='dues') l.dueCount=0;
     else if(a.a==='early'){l.status='closed';l.dueCount=0;}
@@ -817,7 +999,7 @@ function applyMonthTo(st,m,first){
 function plan(){
   var st=cloneSt(S), base=oblOf(st), out=[], prevRem=0;
   SIM.months.forEach(function(m,i){
-    if(i>0) st.loans.forEach(function(l){if(l.status==='active') l.dueCount+=1;}); /* يحل قسط الشهر الجديد */
+    if(i>0) st.loans.forEach(function(l){accrue(l,false);}); /* يحل قسط الشهر الجديد */
     var carried=(m.carry&&i>0)?Math.max(0,prevRem):0;
     var budget=round2(m.budget+carried), before=oblOf(st), used=0;
     var closedL=[],keepL=[],closedC=[],keepC=[];
@@ -873,10 +1055,11 @@ function renderSim(){
 
   // القروض
   h+='<div class="panel"><h3>محاكاة القروض والتمويلات</h3>';
-  if(!r.stBefore.loans.length) h+='<div class="empty">لا توجد قروض أو تمويلات مسجلة.</div>';
+  var SL=r.stBefore.loans.filter(function(l){return !isB(l);}), SB=r.stBefore.loans.filter(isB);
+  if(!SL.length) h+='<div class="empty">لا توجد قروض أو تمويلات مسجلة.</div>';
   else{
     h+='<div class="tablewrap"><table class="resp"><thead><tr><th>الجهة / المنتج</th><th>القسط الشهري</th><th>الأقساط المستحقة</th><th>مبلغ المستحق</th><th>السداد المبكر</th><th>الحالة</th><th>الإجراء</th><th>المبلغ المخصص</th></tr></thead><tbody>';
-    r.stBefore.loans.forEach(function(l){
+    SL.forEach(function(l){
       var a=loanActOf(l,SIM.months[k]);
       h+='<tr class="'+(a.locked?'closed':'')+'"><td data-label="الجهة / المنتج">'+esc(nm(l.name))+'</td>'+
         '<td class="num" data-label="القسط الشهري">'+money(l.installment)+'</td>'+
@@ -895,6 +1078,25 @@ function renderSim(){
   h+='<div class="note">مبلغ السداد المبكر ينقص تقريبيا بما تسدده من أقساط مستحقة أو دفعات يدوية في الأشهر السابقة. المبلغ الرسمي يؤخذ من الجهة، وتقدر تصحح الرقم من صفحة الالتزامات.</div>';
   if(k>0) h+='<div class="note">من الشهر الثاني يُضاف قسط مستحق جديد لكل تمويل نشط، لأن قسط الشهر الجديد يحل موعده. فإذا سددت المستحقات في الشهر السابق يظهر هنا قسط واحد، وإذا لم تسددها يتراكم.</div>';
   h+='</div>';
+
+  // اشتري الآن وادفع لاحقا (يظهر فقط عند وجود التزامات منه)
+  if(SB.length){
+    h+='<div class="panel"><h3>محاكاة اشتري الآن وادفع لاحقا</h3><div class="tablewrap"><table class="resp"><thead><tr><th>الجهة / المنتج</th><th>القسط</th><th>الأقساط</th><th>المستحقة الآن</th><th>مبلغ المستحق</th><th>المتبقي كاملا</th><th>الحالة</th><th>الإجراء</th><th>المبلغ المخصص</th></tr></thead><tbody>';
+    SB.forEach(function(l){
+      var a=loanActOf(l,SIM.months[k]);
+      h+='<tr class="'+(a.locked?'closed':'')+'"><td data-label="الجهة / المنتج">'+esc(nm(l.name))+'</td>'+
+        '<td class="num" data-label="القسط">'+money(l.installment)+'</td>'+
+        '<td class="num" data-label="الأقساط">'+l.paid+' من '+l.count+'</td>'+
+        '<td class="num" data-label="المستحقة الآن">'+l.dueCount+'</td>'+
+        '<td class="num" data-label="مبلغ المستحق">'+money(loanDues(l))+'</td>'+
+        '<td class="num" data-label="المتبقي كاملا">'+money(loanEarly(l))+'</td>'+
+        '<td data-label="الحالة">'+LOAN_STATUS[l.status]+'</td>'+
+        '<td data-label="الإجراء">'+(a.locked?'<span style="color:var(--muted)">منتهٍ، لا إجراء</span>':
+          '<select data-sim="loan" data-id="'+esc(l.id)+'" data-field="a">'+opts(BNPL_ACT,a.a)+'</select>')+'</td>'+
+        '<td class="num" data-label="المبلغ المخصص">'+(a.cost?money(a.cost):'—')+'</td></tr>';
+    });
+    h+='</tbody></table></div><div class="note">يُحسب قسط واحد جديد كل شهر حتى تنتهي الأقساط. بعد سداد آخر قسط يُغلق الالتزام وينخفض الالتزام الشهري.</div></div>';
+  }
 
   // البطاقات
   h+='<div class="panel"><h3>محاكاة البطاقات</h3>';
@@ -1065,6 +1267,10 @@ function applyScenario(){
   if(r.over){toast('المبلغ المتاح لا يكفي لهذه العملية.','err');return;}
   S.loans.forEach(function(l){
     var a=loanActOf(l,m); if(a.a==='none') return; any=true;
+    if(isB(l)){
+      lines.push('«'+esc(l.name)+'»: '+(a.a==='early'?'سداد المتبقي '+fmt(a.cost)+' ر.س وإغلاق الالتزام':'سداد '+fmt(a.cost)+' ر.س'+(a.closes?' (آخر قسط، يُغلق الالتزام)':' وخفض عدد الأقساط المتبقية')));
+      return;
+    }
     if(a.a==='dues') lines.push('«'+esc(l.name)+'»: سداد '+fmt(a.cost)+' ر.س وتصفير الأقساط المستحقة وخفض مبلغ السداد المبكر بنفس المبلغ');
     else if(a.a==='early') lines.push('«'+esc(l.name)+'»: سداد مبكر '+fmt(a.cost)+' ر.س وإغلاق المنتج');
     else lines.push('«'+esc(l.name)+'»: دفعة يدوية '+fmt(a.cost)+' ر.س وخفض مبلغ السداد المبكر بنفس المبلغ (لا تغيّر القسط الشهري)');
@@ -1083,7 +1289,7 @@ function applyScenario(){
   confirmDlg('تأكيد تنفيذ السيناريو',html,'نعم، نفّذ',false,function(){
     var carryOver=(SIM.months[1]&&SIM.months[1].carry)?Math.max(0,r.remaining):0;
     applyMonthTo(S,m,true);
-    S.loans.forEach(function(l){if(l.status==='active') l.dueCount=Math.min(10,l.dueCount+1);});
+    S.loans.forEach(function(l){accrue(l,true);});
     if(SIM.months[1]){SIM.months[1].budget=round2(SIM.months[1].budget+carryOver);SIM.months[1].carry=false;}
     SIM.months.shift();
     while(SIM.months.length<MIN_MONTHS) SIM.months.push(newMonth());
@@ -1121,13 +1327,13 @@ $('#fileImport').addEventListener('change',function(){
   rd.readAsText(f);
 });
 $('#btnReset').addEventListener('click',function(){
-  confirmDlg('إعادة ضبط جميع البيانات','<p>سيتم حذف الراتب والقروض والبطاقات وبيانات المحاكي نهائيا. يُنصح بتصدير نسخة احتياطية أولا.</p><p>هل أنت متأكد؟</p>','نعم، احذف كل شيء',true,function(){
+  confirmDlg('إعادة ضبط جميع البيانات','<p>سيتم حذف الراتب والقروض والبطاقات والالتزامات الشخصية وبيانات المحاكي نهائيا. يُنصح بتصدير نسخة احتياطية أولا.</p><p>هل أنت متأكد؟</p>','نعم، احذف كل شيء',true,function(){
     S=defaults();SIM=simDefaults();save();saveSim();setSalaryInput();setBudgetInput();setOnboarded(false);WIZ.on=true;WIZ.step=0;renderAll();window.scrollTo(0,0);toast('تمت إعادة الضبط.');
   });
 });
 
 /* ===================== تحديث الأداة لآخر نسخة ===================== */
-var APP_VERSION='2026-10-04 · 8';
+var APP_VERSION='2026-10-04 · 9';
 $('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
 /* العمل بدون إنترنت: يحتاج ملف sw.js بجانب هذا الملف في نفس المجلد على الاستضافة */
 if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
@@ -1154,7 +1360,7 @@ var ONB='finTool.onboarded.v1';
 var WIZ={on:false,step:0};
 function isOnboarded(){try{return localStorage.getItem(ONB)==='1';}catch(e){return true;}}
 function setOnboarded(v){try{if(v) localStorage.setItem(ONB,'1'); else localStorage.removeItem(ONB);}catch(e){}}
-function dataEmpty(){return !(S.salary>0)&&!S.loans.length&&!S.cards.length;}
+function dataEmpty(){return !(S.salary>0)&&!S.loans.length&&!S.cards.length&&!S.personal.length;}
 function wizHintHtml(){
   return S.salary>0?('حد الالتزام المستهدف ('+LIMIT_PCT+'%): <b>'+money(round2(S.salary*LIMIT_PCT/100))+'</b>')
                    :'يمكنك تخطي هذه الخطوة وإدخال الراتب لاحقا من الإعدادات.';
