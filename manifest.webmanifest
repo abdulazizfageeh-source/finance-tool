@@ -1,0 +1,15 @@
+{
+  "name": "الالتزامات المالية",
+  "short_name": "التزاماتي",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./financial-tool.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f5fb",
+  "theme_color": "#4338ca",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

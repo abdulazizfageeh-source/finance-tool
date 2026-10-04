@@ -1,7 +1,7 @@
 /* عامل خدمة بسيط: يخزّن الأداة في الجهاز لتفتح بدون إنترنت.
    الاستراتيجية: الشبكة أولا (لتصل التحديثات)، وإذا لم تتوفر أو تأخرت تُفتح النسخة المخزّنة. */
-var CACHE = 'fin-tool-v1';
-var CORE = ['./', './financial-tool.html', './index.html'];
+var CACHE = 'fin-tool-v2';
+var CORE = ['./', './financial-tool.html', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(
