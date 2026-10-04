@@ -421,7 +421,7 @@ function defaults(){return {salary:0,loans:[],cards:[],personal:[]};}
 function isB(l){return l&&l.kind==='bnpl';}
 var MIN_MONTHS=5, MAX_MONTHS=12;
 var LOAN_A={none:1,dues:1,early:1,manual:1}, CARD_A={none:1,min:1,partial:1,full:1};
-function newMonth(){return {budget:0,carry:false,personal:0,loans:{},cards:{}};}
+function newMonth(){return {budget:0,carry:false,personal:0,pp:{},loans:{},cards:{}};}
 function simDefaults(){return sanSim(null);}
 function sanLoan(x){
   x=x||{};
@@ -463,9 +463,10 @@ function sanActs(o,allowed){
     var v=o[k]||{}; out[k]={a:allowed[v.a]?v.a:'none',amt:clampNum(v.amt)};});
   return out;
 }
+function sanPP(o){var out={};if(o&&typeof o==='object') Object.keys(o).forEach(function(k){var v=clampNum(o[k]);if(v>0) out[k]=v;});return out;}
 function sanMonth(m){
   m=m||{};
-  return {budget:clampNum(m.budget),carry:m.carry===true,personal:clampNum(m.personal),loans:sanActs(m.loans,LOAN_A),cards:sanActs(m.cards,CARD_A)};
+  return {budget:clampNum(m.budget),carry:m.carry===true,personal:clampNum(m.personal),pp:sanPP(m.pp),loans:sanActs(m.loans,LOAN_A),cards:sanActs(m.cards,CARD_A)};
 }
 /* يقبل الصيغة الجديدة (months) والقديمة (شهر واحد) */
 function sanSim(s){
@@ -913,7 +914,7 @@ $('#page-commit').addEventListener('click',function(e){
   else if(a==='del-per'){
     var pp=S.personal.filter(function(x){return x.id===id;})[0]; if(!pp) return;
     confirmDlg('حذف التزام شخصي','<p>هل تريد حذف «'+esc(pp.name||'بدون اسم')+'» نهائيا؟</p>','حذف',true,function(){
-      S.personal=S.personal.filter(function(x){return x.id!==id;});save();renderAll();toast('تم الحذف.');});
+      S.personal=S.personal.filter(function(x){return x.id!==id;});purgeSim('pp',id);save();saveSim();renderAll();toast('تم الحذف.');});
   }
   else if(a==='edit-card') openCard(id);
   else if(a==='del-loan'){
@@ -961,7 +962,8 @@ function purgeSim(key,id){SIM.months.forEach(function(m){delete m[key][id];});}
 function nm(x){return x||'بدون اسم';}
 function cloneSt(st){
   return {loans:st.loans.map(function(l){return Object.assign({},l);}),
-          cards:st.cards.map(function(c){return Object.assign({},c);})};
+          cards:st.cards.map(function(c){return Object.assign({},c);}),
+          personal:(st.personal||[]).map(function(p){return Object.assign({},p);})};
 }
 function oblOf(st){
   var t=0;
@@ -990,6 +992,7 @@ function costOf(kind,p,v,first){
   pm.cards[p.id]=v;return cardActOf(p,pm,first).cost;
 }
 /* تطبيق إجراءات شهر على حالة (مصفوفتا loans و cards) */
+function ppAmt(p,m){return round2(Math.min(clampNum((m.pp||{})[p.id]),personLeft(p)));}
 function applyMonthTo(st,m,first){
   st.loans.forEach(function(l){
     var a=loanActOf(l,m);
@@ -1009,6 +1012,7 @@ function applyMonthTo(st,m,first){
     else if(a.a==='full'){c.status='closed';c.balance=0;}
     c.minDue=0; /* الحد الأدنى اليدوي للشهر الحالي فقط، ولا يُرحَّل */
   });
+  (st.personal||[]).forEach(function(p){p.paid=round2(p.paid+ppAmt(p,m));}); /* دفعات مخططة لالتزامات شخصية */
 }
 /* حساب الخطة كاملة: كل شهر يبدأ من نتيجة الشهر السابق، والشهر الأول من بياناتك الفعلية */
 function plan(){
@@ -1028,11 +1032,13 @@ function plan(){
       if(c.status==='closed') return;
       if(a.closes) closedC.push(nm(c.name)); else keepC.push(nm(c.name));
     });
-    var pers=clampNum(m.personal); used=round2(used+pers); /* دفعات التزامات شخصية سُدّدت من مبلغ المحاكي (لا تغيّر الالتزام الشهري) */
+    var ppUsed=0; st.personal.forEach(function(p){ppUsed+=ppAmt(p,m);}); ppUsed=round2(ppUsed);
+    var pers=clampNum(m.personal); used=round2(used+pers+ppUsed); /* دفعات التزامات شخصية سُدّدت من مبلغ المحاكي (لا تغيّر الالتزام الشهري) */
     var after=cloneSt(st); applyMonthTo(after,m,i===0);
     var aft=oblOf(after), drop=round2(before-aft);
-    var r={i:i,stBefore:st,carried:round2(carried),budget:budget,used:used,pers:pers,remaining:round2(budget-used),
+    var r={i:i,stBefore:st,carried:round2(carried),budget:budget,used:used,pers:pers,ppUsed:ppUsed,persBefore:round2(st.personal.reduce(function(a,p){return a+personLeft(p);},0)),remaining:round2(budget-used),
       over:used>budget+0.004,before:before,after:aft,drop:drop,dropPct:before>0?drop/before*100:0,
+      persAfter:round2(after.personal.reduce(function(a,p){return a+personLeft(p);},0)),
       evB:evalRatio(before,S.salary),evA:evalRatio(aft,S.salary),
       closedL:closedL,keepL:keepL,closedC:closedC,keepC:keepC,
       base:base,totalDrop:round2(base-aft),totalDropPct:base>0?(base-aft)/base*100:0};
@@ -1062,7 +1068,7 @@ function renderSim(){
   renderTabs(P);
   $('#budgetLabel').textContent='المبلغ المتاح للسداد في الشهر '+(k+1)+' (ر.س)';
   $('#budgetStats').innerHTML=stat('المبلغ الأساسي',money(r.budget),r.carried>0?'منه مرحّل من الشهر السابق: '+fmt(r.carried):'')+
-    stat('المستخدم حتى الآن',money(r.used),r.pers>0?'منها لالتزامات شخصية: '+fmt(r.pers):'')+
+    stat('المستخدم حتى الآن',money(r.used),(r.pers+r.ppUsed)>0?'منها لالتزامات شخصية: '+fmt(round2(r.pers+r.ppUsed)):'')+
     stat('المتبقي','<span class="'+(r.remaining<=0&&r.budget>0?'t-near':'')+'">'+money(r.remaining)+'</span>');
   if(k>0){
     $('#carryBox').innerHTML='<label class="chk"><input type="checkbox" id="carryChk"'+(SIM.months[k].carry?' checked':'')+'> ترحيل المتبقي من الشهر '+k+' ('+fmt(Math.max(0,P[k-1].remaining))+' ر.س) إلى ميزانية هذا الشهر</label>';
@@ -1140,6 +1146,19 @@ function renderSim(){
   }
   h+='<div class="note">سداد الحد الأدنى والدفعة الجزئية لا يغيّران الالتزام الشهري للبطاقة (لأنه يعتمد على الحد الائتماني ونسبة الاحتساب)، والسداد الكامل مع الإغلاق يجعله صفرا. الحد الأدنى المستحق في الشهر 1 هو ما أدخلته يدويا (أو 5% من الرصيد إن لم تدخله)، ومن الشهر 2 يُحسب تلقائيا 5% من الرصيد المتبقي.</div></div>';
 
+  // التزامات شخصية (اختياري: لا تدخل في الالتزام الشهري ولا النسبة، وتُخصم من مبلغ الشهر إن خصصت لها مبلغا)
+  if(r.stBefore.personal.length){
+    h+='<div class="panel"><h3>التزامات شخصية (اختياري)</h3><div class="tablewrap"><table class="resp"><thead><tr><th>الشخص / الجهة</th><th>المتبقي في بداية الشهر</th><th>المبلغ المخصص للسداد</th><th>المتبقي بعد الشهر</th></tr></thead><tbody>';
+    r.stBefore.personal.forEach(function(p){
+      var left=personLeft(p), amt=ppAmt(p,SIM.months[k]);
+      h+='<tr class="'+(left<=0?'closed':'')+'"><td data-label="الشخص / الجهة">'+esc(nm(p.name))+'</td>'+
+        '<td class="num" data-label="المتبقي في بداية الشهر">'+(left<=0?'مسدد':money(left))+'</td>'+
+        '<td class="num" data-label="المبلغ المخصص للسداد">'+(left<=0?'—':'<input type="text" inputmode="decimal" data-sim="person" data-id="'+esc(p.id)+'" data-field="amt" value="'+(amt?fmt(amt):'')+'" placeholder="0.00">')+'</td>'+
+        '<td class="num" data-label="المتبقي بعد الشهر">'+(round2(left-amt)<=0?'مسدد':money(round2(left-amt)))+'</td></tr>';
+    });
+    h+='</tbody></table></div><div class="note">اترك الخانة فارغة إن لم تقصد السداد في هذا الشهر. المبلغ المخصص يُخصم من مبلغ الشهر فقط، ولا يؤثر على الالتزام الشهري ولا نسبة الـ45%. وعند «اعتماد وتنفيذ السيناريو» تُسجَّل دفعات الشهر 1 على الديون فعلا.</div></div>';
+  }
+
   // النتائج
   h+='<div class="panel"><h3>نتيجة السيناريو (الشهر '+(k+1)+')</h3><div class="kv">'+
     kv('مبلغ السيناريو الأساسي',money(r.budget))+
@@ -1155,6 +1174,7 @@ function renderSim(){
     kv('المساحة المتاحة تحت الحد بعد الخطة',hasSal?(r.evA.over?money(0):money(r.evA.diff)):'—')+
     kv('التجاوز بعد الخطة',hasSal?(r.evA.over?'<span class="t-over">'+money(-r.evA.diff)+'</span>':money(0)):'—')+
     kv('حالة الالتزام بعد الخطة',badge(r.evA))+
+    (S.personal.length?kv('المتبقي من الالتزامات الشخصية بعد الشهر (خارج النسبة)',money(r.persAfter)):'')+
     (k>0?kv('الالتزام الشهري اليوم (قبل كل الخطة)',money(r.base))+kv('إجمالي الانخفاض منذ اليوم',money(r.totalDrop)+' ('+fmtPct(r.totalDropPct)+')'):'')+
   '</div>';
   if(!hasSal) h+='<div class="msg warn">أدخل صافي الراتب في صفحة الراتب لتظهر النسب والمساحة المتاحة.</div>';
@@ -1171,7 +1191,7 @@ function renderSim(){
   // ملخص الخطة لجميع الأشهر
   var totUsed=0;
   h+='<div class="panel"><h3>ملخص الخطة لجميع الأشهر</h3>';
-  h+='<div class="tablewrap"><table class="resp plan"><thead><tr><th>الشهر</th><th>المبلغ المتاح</th><th>المدفوع</th><th>المتبقي</th><th>الالتزام الشهري بعد الشهر</th><th>الانخفاض الشهري</th><th>النسبة من الراتب</th><th>الحالة</th><th>أُغلق</th></tr></thead><tbody>';
+  h+='<div class="tablewrap"><table class="resp plan"><thead><tr><th>الشهر</th><th>المبلغ المتاح</th><th>المدفوع</th><th>المتبقي</th><th>الالتزام الشهري بعد الشهر</th><th>الانخفاض الشهري</th><th>النسبة من الراتب</th><th>الحالة</th><th>أُغلق</th>'+(S.personal.length?'<th>المتبقي شخصي</th>':'')+'</tr></thead><tbody>';
   P.forEach(function(x){
     totUsed+=x.used;
     h+='<tr data-month="'+x.i+'" class="'+(x.i===k?'cur':'')+'">'+
@@ -1183,12 +1203,12 @@ function renderSim(){
       '<td class="num" data-label="الانخفاض الشهري">'+money(x.drop)+'</td>'+
       '<td class="num" data-label="النسبة من الراتب">'+(hasSal?fmtPct(x.evA.ratio):'—')+'</td>'+
       '<td data-label="الحالة">'+badge(x.evA)+'</td>'+
-      '<td class="num" data-label="أُغلق">'+(x.closedL.length+x.closedC.length)+'</td></tr>';
+      '<td class="num" data-label="أُغلق">'+(x.closedL.length+x.closedC.length)+'</td>'+(S.personal.length?'<td class="num" data-label="المتبقي شخصي">'+money(x.persAfter)+'</td>':'')+'</tr>';
   });
   var last=P[P.length-1];
   h+='</tbody></table></div><div style="margin-top:12px"></div>'+
     sumBox([['الالتزام الشهري اليوم: ',money(P[0].base)],['إجمالي المدفوع في الخطة: ',money(round2(totUsed))],
-            ['الالتزام الشهري في نهاية الخطة: ',money(last.after)],['إجمالي الانخفاض: ',money(round2(P[0].base-last.after))]])+
+            ['الالتزام الشهري في نهاية الخطة: ',money(last.after)],['إجمالي الانخفاض: ',money(round2(P[0].base-last.after))]].concat(S.personal.length?[['المتبقي من الالتزامات الشخصية في نهاية الخطة: ',money(last.persAfter)]]:[]))+
     '<div class="note">اضغط على أي صف للانتقال إلى ذلك الشهر. الخطة تفترض ثبات الراتب، وأن الأقساط المستحقة وأرصدة البطاقات لا تتغير بين الأشهر إلا بما تسدده في خطتك.</div></div>';
   $('#simBody').innerHTML=h;
   if(keepY>0&&(window.pageYOffset||0)!==keepY) window.scrollTo(0,keepY); /* لا نرجع المستخدم لأول الصفحة بعد كل تعديل */
@@ -1196,6 +1216,16 @@ function renderSim(){
 
 function simChange(kind,id,field,value){
   var P=plan(), k=SIM.cur, r=P[k], m=SIM.months[k];
+  if(kind==='person'){
+    var pr=r.stBefore.personal.filter(function(x){return x.id===id;})[0]; if(!pr) return;
+    var pa=parseNum(value); if(pa.err){toast(pa.err,'err');renderSim();return;}
+    var left=personLeft(pr);
+    if(pa.v>left+0.004){toast('المبلغ أكبر من المتبقي على هذا الالتزام ('+fmt(left)+' ر.س).','err');renderSim();return;}
+    var oldc=ppAmt(pr,m);
+    if(round2(r.used-oldc+pa.v)>r.budget+0.004){toast('المبلغ المتاح لا يكفي لهذه العملية.','err');renderSim();return;}
+    if(pa.v>0) m.pp[id]=pa.v; else delete m.pp[id];
+    saveSim();renderSim();return;
+  }
   var store=kind==='loan'?m.loans:m.cards;
   var prod=(kind==='loan'?r.stBefore.loans:r.stBefore.cards).filter(function(x){return x.id===id;})[0]; if(!prod) return;
   var cur=store[id]||{a:'none',amt:0}, next={a:cur.a,amt:cur.amt};
@@ -1249,7 +1279,7 @@ $('#carryBox').addEventListener('change',function(e){
   saveSim();renderSim();
 });
 
-function monthHasContent(m){return m.budget>0||Object.keys(m.loans).length>0||Object.keys(m.cards).length>0;}
+function monthHasContent(m){return m.budget>0||Object.keys(m.pp||{}).length>0||Object.keys(m.loans).length>0||Object.keys(m.cards).length>0;}
 $('#monthTabs').addEventListener('click',function(e){
   var b=e.target.closest('button'); if(!b) return;
   if(b.dataset.month!==undefined){
@@ -1299,6 +1329,10 @@ function applyScenario(){
     if(a.a==='min') lines.push('«'+esc(c.name)+'»: سداد الحد الأدنى '+fmt(a.cost)+' ر.س وخفض الرصيد المستحق (بدون تغيير الحالة أو الالتزام الشهري)');
     else if(a.a==='partial') lines.push('«'+esc(c.name)+'»: دفعة '+fmt(a.cost)+' ر.س وخفض الرصيد المستحق');
     else lines.push('«'+esc(c.name)+'»: سداد كامل '+fmt(a.cost)+' ر.س وإغلاق البطاقة');
+  });
+  S.personal.forEach(function(p){
+    var a=ppAmt(p,m); if(!(a>0)) return; any=true;
+    lines.push('«'+esc(p.name)+'» (التزام شخصي): تسجيل دفعة '+fmt(a)+' ر.س (لا تؤثر على الالتزام الشهري)');
   });
   if(!any){toast('لا توجد إجراءات في السيناريو لتنفيذها.','err');return;}
   var html='<p>سيتم تعديل بياناتك الأصلية كما يلي:</p><ul class="mlist">'+lines.map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul>'+
@@ -1352,7 +1386,7 @@ $('#btnReset').addEventListener('click',function(){
 });
 
 /* ===================== تحديث الأداة لآخر نسخة ===================== */
-var APP_VERSION='2026-10-05 · 12';
+var APP_VERSION='2026-10-05 · 13';
 $('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
 /* العمل بدون إنترنت: يحتاج ملف sw.js بجانب هذا الملف في نفس المجلد على الاستضافة */
 if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
