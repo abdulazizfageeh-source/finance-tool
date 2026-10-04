@@ -483,6 +483,10 @@ function readStore(k){
 var S=sanData(readStore(KEY));
 var SIM=sanSim(readStore(SIMKEY));
 
+/* سجل التراجع: نسخة من البيانات والخطة قبل كل «اعتماد وتنفيذ» (آخر 10) */
+var UNDOKEY='finTool.undo.v1';
+var UNDO=(function(){var u=readStore(UNDOKEY);return Array.isArray(u)?u.filter(function(x){return x&&x.S&&x.SIM;}).slice(-10):[];})();
+function saveUndo(){writeStore(UNDOKEY,UNDO);}
 function writeStore(k,v){
   try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){storageOK=false;return false;}
 }
@@ -1210,6 +1214,10 @@ function renderSim(){
     sumBox([['الالتزام الشهري اليوم: ',money(P[0].base)],['إجمالي المدفوع في الخطة: ',money(round2(totUsed))],
             ['الالتزام الشهري في نهاية الخطة: ',money(last.after)],['إجمالي الانخفاض: ',money(round2(P[0].base-last.after))]].concat(S.personal.length?[['المتبقي من الالتزامات الشخصية في نهاية الخطة: ',money(last.persAfter)]]:[]))+
     '<div class="note">اضغط على أي صف للانتقال إلى ذلك الشهر. الخطة تفترض ثبات الراتب، وأن الأقساط المستحقة وأرصدة البطاقات لا تتغير بين الأشهر إلا بما تسدده في خطتك.</div></div>';
+  h+='<div class="panel"><h3>إدارة الخطة</h3><div class="note" style="margin:0 0 12px">«اعتماد وتنفيذ» يغيّر بياناتك الفعلية ويحوّل الشهر 2 إلى الشهر 1. إن أخطأت يمكنك التراجع عن آخر اعتماد، أو تصفير كل الأشهر المخططة وبدء السيناريو من جديد (بياناتك الفعلية لا تتغير بالتصفير).</div><div class="btnrow">'+
+    (UNDO.length?'<button class="btn" id="btnUndo">تراجع عن آخر اعتماد ('+UNDO.length+')</button>':'')+
+    '<button class="btn" id="btnSimResetAll">تصفير كل الأشهر</button></div>'+
+    (UNDO.length?'<div class="note">آخر اعتماد: '+esc(new Date(UNDO[UNDO.length-1].at).toLocaleString('ar-SA'))+'. التراجع يعيد بياناتك وخطتك كما كانتا قبله.</div>':'')+'</div>';
   $('#simBody').innerHTML=h;
   if(keepY>0&&(window.pageYOffset||0)!==keepY) window.scrollTo(0,keepY); /* لا نرجع المستخدم لأول الصفحة بعد كل تعديل */
 }
@@ -1303,6 +1311,17 @@ $('#simBody').addEventListener('click',function(e){
     return;
   }
   if(e.target.id==='btnApply'){applyScenario();return;}
+  if(e.target.id==='btnSimResetAll'){
+    confirmDlg('تصفير كل الأشهر','<p>سيتم مسح مبالغ وإجراءات جميع الأشهر المخططة وبدء السيناريو من جديد. بياناتك الفعلية (القروض والبطاقات والديون) لا تتغير.</p>','نعم، صفّر',true,function(){
+      SIM=simDefaults();saveSim();setBudgetInput();renderSim();window.scrollTo(0,0);toast('تم تصفير كل الأشهر.');});
+    return;
+  }
+  if(e.target.id==='btnUndo'){
+    var last=UNDO[UNDO.length-1]; if(!last) return;
+    confirmDlg('التراجع عن آخر اعتماد','<p>سيتم إرجاع بياناتك الفعلية وخطة الأشهر كما كانت قبل آخر اعتماد ('+esc(new Date(last.at).toLocaleString('ar-SA'))+'). أي تعديل أجريته بعد ذلك الاعتماد سيُفقد. هل تريد المتابعة؟</p>','نعم، تراجع',true,function(){
+      S=sanData(last.S);SIM=sanSim(last.SIM);UNDO.pop();save();saveSim();saveUndo();setSalaryInput();setBudgetInput();renderAll();window.scrollTo(0,0);toast('تم التراجع عن آخر اعتماد.');});
+    return;
+  }
   var tr=e.target.closest('tr[data-month]');
   if(tr&&!e.target.closest('select,input,button')){
     SIM.cur=parseInt(tr.dataset.month,10)||0;saveSim();setBudgetInput();renderSim();window.scrollTo(0,0);
@@ -1340,6 +1359,8 @@ function applyScenario(){
     '<p>بعد التنفيذ يبدأ الشهر التالي، فيُضاف قسط مستحق جديد واحد لكل تمويل نشط في خانة «الأقساط المستحقة» (تقدر تعدله من صفحة الالتزامات)، ويُحتسب الحد الأدنى المستحق للبطاقات تلقائيا 5% من الرصيد المتبقي. ويصبح الشهر 2 هو الشهر 1، وتبقى بقية الأشهر المخططة محفوظة.</p>'+
     '<p>هل تريد المتابعة؟</p>';
   confirmDlg('تأكيد تنفيذ السيناريو',html,'نعم، نفّذ',false,function(){
+    UNDO.push({at:new Date().toISOString(),S:JSON.parse(JSON.stringify(S)),SIM:JSON.parse(JSON.stringify(SIM))});
+    if(UNDO.length>10) UNDO.shift(); saveUndo();
     var carryOver=(SIM.months[1]&&SIM.months[1].carry)?Math.max(0,r.remaining):0;
     applyMonthTo(S,m,true);
     S.loans.forEach(function(l){accrue(l,true);});
@@ -1381,12 +1402,12 @@ $('#fileImport').addEventListener('change',function(){
 });
 $('#btnReset').addEventListener('click',function(){
   confirmDlg('إعادة ضبط جميع البيانات','<p>سيتم حذف الراتب والقروض والبطاقات والالتزامات الشخصية وبيانات المحاكي نهائيا. يُنصح بتصدير نسخة احتياطية أولا.</p><p>هل أنت متأكد؟</p>','نعم، احذف كل شيء',true,function(){
-    S=defaults();SIM=simDefaults();save();saveSim();setSalaryInput();setBudgetInput();setOnboarded(false);WIZ.on=true;WIZ.step=0;renderAll();window.scrollTo(0,0);toast('تمت إعادة الضبط.');
+    S=defaults();SIM=simDefaults();UNDO=[];saveUndo();save();saveSim();setSalaryInput();setBudgetInput();setOnboarded(false);WIZ.on=true;WIZ.step=0;renderAll();window.scrollTo(0,0);toast('تمت إعادة الضبط.');
   });
 });
 
 /* ===================== تحديث الأداة لآخر نسخة ===================== */
-var APP_VERSION='2026-10-05 · 13';
+var APP_VERSION='2026-10-05 · 14';
 $('#appVer').textContent='رقم الإصدار: '+APP_VERSION+' (بياناتك لا تتأثر بالتحديث)';
 /* العمل بدون إنترنت: يحتاج ملف sw.js بجانب هذا الملف في نفس المجلد على الاستضافة */
 if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
